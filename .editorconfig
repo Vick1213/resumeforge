@@ -1,0 +1,100 @@
+root = true
+
+# ─────────────────────────────────────────────────────────────────────────
+# Defaults for every file
+# ─────────────────────────────────────────────────────────────────────────
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+# ─────────────────────────────────────────────────────────────────────────
+# C# / .NET  (backend/**/*.cs)
+# ─────────────────────────────────────────────────────────────────────────
+[*.cs]
+indent_size = 4
+tab_width = 4
+
+# --- Namespaces --------------------------------------------------------
+# CONTRACTS §13 requires file-scoped namespaces everywhere. TreatWarningsAsErrors
+# is on, so `error` here really does fail the build on a block-scoped namespace —
+# that's intentional, this rule is unambiguous and everyone is already following it.
+csharp_style_namespace_declarations = file_scoped:error
+
+# --- Usings --------------------------------------------------------------
+# System.* groups first, no blank line between groups. This is a formatting
+# preference (`dotnet format`), not a diagnostic with its own severity, so it
+# isn't given a `:severity` suffix and can't fail the build on its own.
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+csharp_using_directive_placement = outside_namespace:suggestion
+
+# --- var preferences -----------------------------------------------------
+# Left as `suggestion`: a real, if minor, style preference, but not worth
+# risking a build break over a call the parallel implementers haven't all
+# converged on yet (e.g. `var` for LINQ results vs. an explicit type for clarity).
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = true:suggestion
+
+# --- Expression-bodied members --------------------------------------------
+# Purely cosmetic — encouraged for one-line members, never enforced.
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_expression_bodied_properties = true:suggestion
+csharp_style_expression_bodied_indexers = true:suggestion
+csharp_style_expression_bodied_accessors = true:suggestion
+csharp_style_expression_bodied_constructors = false:suggestion
+csharp_style_expression_bodied_operators = when_on_single_line:suggestion
+
+# --- Modifiers -------------------------------------------------------------
+# `sealed by default` (CONTRACTS §13) is a convention, not something a
+# built-in analyzer can safely enforce without false positives on the
+# abstract/polymorphic types the tailoring command hierarchy needs (e.g.
+# `TailorCommand` itself). Left unset rather than guessed at.
+csharp_preferred_modifier_order = public,private,protected,internal,file,static,extern,new,virtual,abstract,sealed,override,readonly,unsafe,required,volatile,async:suggestion
+
+# --- Braces and spacing (cosmetic; `dotnet format` territory) --------------
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_space_after_keywords_in_control_flow_statements = true
+
+# --- Nullable / implicit usings are project-level (Directory.Build.props),
+#     not editorconfig concerns — not duplicated here.
+
+# ─────────────────────────────────────────────────────────────────────────
+# TypeScript / TSX  (frontend/**, extension/**)
+# ─────────────────────────────────────────────────────────────────────────
+[*.{ts,tsx}]
+indent_size = 2
+tab_width = 2
+quote_type = single
+
+# ─────────────────────────────────────────────────────────────────────────
+# JSON / YAML
+# ─────────────────────────────────────────────────────────────────────────
+[*.{json,yml,yaml}]
+indent_size = 2
+tab_width = 2
+
+# package-lock.json is machine-generated; don't fight npm's own formatting.
+[package-lock.json]
+indent_size = 2
+insert_final_newline = unset
+
+# ─────────────────────────────────────────────────────────────────────────
+# Markdown — preserve trailing double-space line breaks
+# ─────────────────────────────────────────────────────────────────────────
+[*.md]
+trim_trailing_whitespace = false
+
+# ─────────────────────────────────────────────────────────────────────────
+# Project/solution files
+# ─────────────────────────────────────────────────────────────────────────
+[*.{csproj,props,targets,slnx}]
+indent_size = 2

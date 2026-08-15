@@ -1,0 +1,56 @@
+# .NET
+bin/
+obj/
+artifacts/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+.vs/
+.idea/
+*.dotCover
+*.dotTrace
+
+# Node (frontend/, extension/)
+node_modules/
+dist/
+dist-ssr/
+.vite/
+.vite-inspect/
+*.local
+!frontend/package-lock.json
+!extension/package-lock.json
+
+# Test output
+TestResults/
+coverage/
+*.trx
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Secrets and local configuration
+.env
+.env.local
+.env.*.local
+appsettings.Development.local.json
+appsettings.*.local.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editors
+*.swp
+*.swo
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+*.log
+npm-debug.log*

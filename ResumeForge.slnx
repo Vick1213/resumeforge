@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/backend/" />
+  <Folder Name="/backend/src/">
+    <Project Path="backend/src/ResumeForge.Api/ResumeForge.Api.csproj" />
+    <Project Path="backend/src/ResumeForge.Application/ResumeForge.Application.csproj" />
+    <Project Path="backend/src/ResumeForge.Domain/ResumeForge.Domain.csproj" />
+    <Project Path="backend/src/ResumeForge.Infrastructure/ResumeForge.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/backend/tests/">
+    <Project Path="backend/tests/ResumeForge.Api.Tests/ResumeForge.Api.Tests.csproj" />
+    <Project Path="backend/tests/ResumeForge.Application.Tests/ResumeForge.Application.Tests.csproj" />
+    <Project Path="backend/tests/ResumeForge.Domain.Tests/ResumeForge.Domain.Tests.csproj" />
+    <Project Path="backend/tests/ResumeForge.Infrastructure.Tests/ResumeForge.Infrastructure.Tests.csproj" />
+  </Folder>
+</Solution>
