@@ -292,8 +292,8 @@ public sealed record JobAnalysis
     public required string JobId { get; init; }
     public required IReadOnlyList<Requirement> Requirements { get; init; }
     public required IReadOnlyList<string> Keywords { get; init; }       // normalized, ranked
-    public required IReadOnlyList<string> MatchedSkills { get; init; }  // present in the KB
-    public required IReadOnlyList<string> MissingSkills { get; init; }  // in JD, not in KB
+    public required IReadOnlyList<string> MatchedSkills { get; init; }  // recognized by the taxonomy
+    public required IReadOnlyList<string> MissingSkills { get; init; }  // skill-like, taxonomy unknown
     public required SeniorityLevel Seniority { get; init; }
 }
 
@@ -311,6 +311,15 @@ public sealed record Requirement
 
 public enum RequirementKind { Skill, Experience, Education, Responsibility, Other }
 ```
+
+`MatchedSkills` and `MissingSkills` are deliberately scoped to the **taxonomy**, not to
+the knowledge base. `JobAnalyzer` depends only on `ISkillTaxonomy`, so it can be run and
+cached per job posting independently of whose resume it is later matched against, and it
+stays deterministic. `MatchedSkills` therefore means "this JD term is a skill the
+taxonomy recognizes" and `MissingSkills` means "this looks like a skill but the taxonomy
+has no entry for it" — the latter is the signal for growing `skills.json`. Reconciling a
+posting against a specific candidate's evidence is `CoverageAnalyzer`'s job, further down
+the graph, and that is what `RequirementCoverage.EvidenceIds` reports.
 
 The analyzer is pure C#: sentence segmentation, a bundled skill taxonomy
 (`ResumeForge.Infrastructure/Data/skills.json` — alias → canonical), section detection
