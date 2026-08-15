@@ -3,6 +3,11 @@
     <ProjectReference Include="..\ResumeForge.Application\ResumeForge.Application.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Embedded so the taxonomy travels with the assembly and needs no deploy-time
+         file layout. Logical name: ResumeForge.Infrastructure.Data.skills.json -->
+    <EmbeddedResource Include="Data/skills.json" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" />
