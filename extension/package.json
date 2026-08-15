@@ -1,0 +1,22 @@
+{
+  "name": "resumeforge-autofill",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ResumeForge Autofill — Chrome MV3 extension that fills job application forms via a zero-token-first cascade.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "tsc --noEmit -p tsconfig.json && vite build && node scripts/build-content.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.270",
+    "@types/node": "^22.10.2",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8",
+    "jsdom": "^25.0.1"
+  }
+}
