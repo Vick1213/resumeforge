@@ -620,9 +620,28 @@ public sealed record ModelResponse<T>
 ```
 
 Implementations in `ResumeForge.Infrastructure.Ai`:
-- `AnthropicLanguageModel` — real client, model id from `ResumeForge:Ai:Model`
-  (default `claude-sonnet-5`), API key from `ANTHROPIC_API_KEY`. Uses tool-use to force
-  a JSON schema, retries once on schema mismatch feeding the validation error back.
+- `DeepSeekLanguageModel` — the real client. Base URL from `ResumeForge:Ai:BaseUrl`
+  (default `https://api.deepseek.com`), model id from `ResumeForge:Ai:Model` (default
+  `deepseek-chat`), API key from `DEEPSEEK_API_KEY` or `ResumeForge:Ai:ApiKey`. Auth is
+  `Authorization: Bearer <key>`; the endpoint is `POST /chat/completions`.
+
+  Structured output is forced with OpenAI-style function calling: declare one function
+  named `emit_result` whose `parameters` is the JSON Schema named by
+  `ModelRequest.SchemaName`, and pin `tool_choice` to it so the reply is nothing but the
+  validated argument object. If the response carries no tool call — which
+  `deepseek-reasoner` can do, since it does not support forced function calls — fall
+  back to re-requesting with `response_format: { "type": "json_object" }` and parsing the
+  message content. Retry once on a schema mismatch, feeding the validation error back.
+
+  Token usage maps from `usage.prompt_tokens` and `usage.completion_tokens`. DeepSeek
+  also reports `usage.prompt_cache_hit_tokens` from its own server-side context cache;
+  map that onto `TokenUsage.CacheHits` so the UI's cost readout reflects real savings
+  rather than only the local `CachingLanguageModel` hits.
+
+  Because DeepSeek speaks the OpenAI chat-completions wire format, `BaseUrl` being
+  configurable means this one class also targets OpenAI, Together, Groq, or a local
+  Ollama endpoint without a code change. That is a property worth keeping, not an
+  accident — do not hardcode the host.
 - `HeuristicLanguageModel` — **no network**, used when no API key is present and in all
   tests. Produces valid commands by pure ranking rules (include top-scored entries,
   select best-matching variants, order by relevance, no rewrites). The whole product must
