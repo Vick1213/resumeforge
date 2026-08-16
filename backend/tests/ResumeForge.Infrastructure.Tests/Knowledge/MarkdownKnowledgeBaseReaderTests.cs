@@ -158,6 +158,82 @@ public sealed class MarkdownKnowledgeBaseReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task Folds_hard_wrapped_continuation_lines_into_the_item_they_belong_to()
+    {
+        WriteFile("experience/acme-corp.md",
+            "---",
+            "type: experience",
+            "role: Engineer",
+            "organization: Acme",
+            "startDate: 2020-01",
+            "endDate: 2021-01",
+            "---",
+            "",
+            "- Cut p99 latency from 840ms to 120ms by rebuilding the fan-out path,",
+            "  removing three synchronous hops from the request.",
+            "  - Rebuilt the fan-out path, cutting p99 latency to 120ms by removing",
+            "    three synchronous hops.",
+            "- Led a migration project.");
+
+        var snapshot = await CreateReader().ReadAsync(CancellationToken.None);
+
+        snapshot.Diagnostics.ShouldBeEmpty();
+        var item = snapshot.Items.ShouldHaveSingleItem();
+        item.Bullets.Count.ShouldBe(2);
+        item.Bullets[0].Text.ShouldBe(
+            "Cut p99 latency from 840ms to 120ms by rebuilding the fan-out path, removing three synchronous hops from the request.");
+        item.Bullets[0].Variants.ShouldBe(
+            ["Rebuilt the fan-out path, cutting p99 latency to 120ms by removing three synchronous hops."]);
+        item.Bullets[1].Text.ShouldBe("Led a migration project.");
+    }
+
+    [Fact]
+    public async Task Folds_hard_wrapped_continuation_lines_into_education_highlights()
+    {
+        WriteFile("education/uw.md",
+            "---",
+            "type: education",
+            "institution: University of Washington",
+            "credential: B.S. Computer Science",
+            "endDate: 2018-06",
+            "---",
+            "",
+            "- Coursework: Data Structures & Algorithms, Computational Techniques, Natural Language",
+            "  Processing & AI");
+
+        var snapshot = await CreateReader().ReadAsync(CancellationToken.None);
+
+        snapshot.Diagnostics.ShouldBeEmpty();
+        snapshot.Items.ShouldHaveSingleItem().Bullets.ShouldHaveSingleItem().Text.ShouldBe(
+            "Coursework: Data Structures & Algorithms, Computational Techniques, Natural Language Processing & AI");
+    }
+
+    [Fact]
+    public async Task Warns_on_stray_prose_that_does_not_continue_a_list_item()
+    {
+        WriteFile("experience/acme-corp.md",
+            "---",
+            "type: experience",
+            "role: Engineer",
+            "organization: Acme",
+            "startDate: 2020-01",
+            "endDate: 2021-01",
+            "---",
+            "",
+            "## Highlights",
+            "",
+            "- Cut p99 latency to 120ms.",
+            "",
+            "  This paragraph follows a blank line, so it continues nothing.");
+
+        var snapshot = await CreateReader().ReadAsync(CancellationToken.None);
+
+        var item = snapshot.Items.ShouldHaveSingleItem();
+        item.Bullets.ShouldHaveSingleItem().Text.ShouldBe("Cut p99 latency to 120ms.");
+        snapshot.Diagnostics.Count(d => d.Message.Contains("not a '-' list item")).ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Certification_body_is_always_ignored()
     {
         WriteFile("certifications/cka.md",

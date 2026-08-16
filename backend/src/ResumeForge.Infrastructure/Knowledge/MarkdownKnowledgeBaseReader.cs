@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.Logging;
 using ResumeForge.Application.Abstractions;
 using ResumeForge.Domain.Ids;
@@ -13,8 +14,11 @@ namespace ResumeForge.Infrastructure.Knowledge;
 /// in CONTRACTS.md §3. Frontmatter is parsed with YamlDotNet's low-level representation
 /// model (to preserve key order and source line numbers for diagnostics); bullet and
 /// variant text is extracted by direct line scanning of the body so writing it back is
-/// exactly predictable. A malformed file is recorded as a <see cref="KnowledgeBaseDiagnostic"/>
-/// and skipped; it never aborts the rest of the load.
+/// exactly predictable. A hard-wrapped list item — indented continuation lines under a
+/// <c>-</c> marker — is folded back into a single bullet, so such a file round-trips as
+/// one line per bullet rather than preserving its original wrap column. A malformed file
+/// is recorded as a <see cref="KnowledgeBaseDiagnostic"/> and skipped; it never aborts the
+/// rest of the load.
 /// </summary>
 public sealed class MarkdownKnowledgeBaseReader(
     IProfileRootProvider profileRootProvider,
@@ -290,13 +294,20 @@ public sealed class MarkdownKnowledgeBaseReader(
             return [];
         }
 
-        var bullets = new List<(string Text, List<string> Variants)>();
+        var bullets = new List<(StringBuilder Text, List<StringBuilder> Variants)>();
+
+        // The text a hard-wrapped continuation line belongs to: the most recent list item,
+        // bullet or variant. Null when the previous line cannot take a continuation (start
+        // of body, or a blank line closed the item), which is what makes a stray paragraph
+        // still diagnosable rather than silently glued onto whatever came before it.
+        StringBuilder? continuation = null;
 
         for (var i = 0; i < bodyLines.Count; i++)
         {
             var line = bodyLines[i];
-            if (line.Length == 0)
+            if (line.AsSpan().IsWhiteSpace())
             {
+                continuation = null;
                 continue;
             }
 
@@ -305,34 +316,57 @@ public sealed class MarkdownKnowledgeBaseReader(
 
             if (!trimmed.StartsWith("- ", StringComparison.Ordinal))
             {
+                // Markdown lets a long list item wrap across indented lines. Fold the
+                // remainder back into the item it continues; dropping it would silently
+                // truncate the bullet mid-sentence.
+                if (indent > 0 && continuation is not null)
+                {
+                    continuation.Append(' ').Append(trimmed.TrimEnd());
+                    continue;
+                }
+
                 diagnostics.Add(Diag(relativePath, frontmatterEndLine + 1 + i, "Ignoring body content that is not a '-' list item.", DiagnosticSeverity.Warning));
                 continue;
             }
 
-            var text = trimmed[2..].Trim();
+            var text = new StringBuilder(trimmed[2..].Trim());
 
             if (indent == 0)
             {
                 bullets.Add((text, []));
+                continuation = text;
                 continue;
             }
 
             if (mode == BodyMode.HighlightsOnly)
             {
                 diagnostics.Add(Diag(relativePath, frontmatterEndLine + 1 + i, "Nested list items are not supported for this entry type and were ignored.", DiagnosticSeverity.Warning));
+                // Absorb the ignored item's own wrapped lines so one unsupported item
+                // reports one diagnostic instead of one per source line.
+                continuation = text;
                 continue;
             }
 
             if (bullets.Count == 0)
             {
                 diagnostics.Add(Diag(relativePath, frontmatterEndLine + 1 + i, "Indented list item has no preceding bullet to attach to; ignored.", DiagnosticSeverity.Warning));
+                continuation = text;
                 continue;
             }
 
             bullets[^1].Variants.Add(text);
+            continuation = text;
         }
 
-        return [.. bullets.Select(b => new KnowledgeBullet { Text = b.Text, Variants = b.Variants, Tags = [] })];
+        return
+        [
+            .. bullets.Select(b => new KnowledgeBullet
+            {
+                Text = b.Text.ToString(),
+                Variants = [.. b.Variants.Select(v => v.ToString())],
+                Tags = [],
+            }),
+        ];
     }
 
     private async Task<(ResumeBasics Basics, string? Summary)> ReadBasicsAsync(
