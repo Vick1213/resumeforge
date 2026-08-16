@@ -90,7 +90,7 @@ public static class KnowledgeEndpoints
         }
 
         var relativePath = $"{DirectoryName(type)}/{entityId.Slug}.md";
-        var fileDiagnostics = snapshot.Diagnostics.Where(d => d.FilePath == relativePath).ToList();
+        var fileDiagnostics = snapshot.Diagnostics.Where(d => d.File == relativePath).ToList();
 
         return fileDiagnostics.Count > 0
             ? ProblemResults.BadRequest(string.Join(' ', fileDiagnostics.Select(d => d.Message)))
@@ -114,9 +114,9 @@ public static class KnowledgeEndpoints
     {
         var owned = await importer.ListRepositoriesAsync(request.Username, ct).ConfigureAwait(false);
 
-        var selected = request.RepositoryNames.Count == 0
+        var selected = request.Repos.Count == 0
             ? owned
-            : [.. owned.Where(r => request.RepositoryNames.Contains(r.Name, StringComparer.OrdinalIgnoreCase))];
+            : [.. owned.Where(r => request.Repos.Contains(r.Name, StringComparer.OrdinalIgnoreCase))];
 
         var previews = selected.Select(ToPreview).ToList();
 
@@ -184,7 +184,7 @@ public static class KnowledgeEndpoints
         Source = item.Source,
         UpdatedAt = ReadLastWriteTime(item, profileRoot),
         RawMarkdown = item.RawMarkdown,
-        Diagnostics = [.. snapshot.Diagnostics.Where(d => d.FilePath == item.FilePath)],
+        Diagnostics = [.. snapshot.Diagnostics.Where(d => d.File == item.FilePath)],
     };
 
     private static string? BuildSubtitle(KnowledgeItem item) => item.Type switch

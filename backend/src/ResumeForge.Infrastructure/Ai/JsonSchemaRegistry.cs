@@ -1,5 +1,8 @@
 using System.Collections.Frozen;
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using ResumeForge.Domain.Resume;
 
 namespace ResumeForge.Infrastructure.Ai;
 
@@ -18,8 +21,9 @@ public sealed class JsonSchemaRegistry
     public const string FieldResolutionsSchemaName = "field-resolutions";
 
     private readonly FrozenDictionary<string, JsonDocument> _schemas;
+    private readonly FrozenDictionary<string, string> _payloadPropertyNames;
 
-    /// <summary>Parses every bundled schema document once.</summary>
+    /// <summary>Parses every bundled schema document once, and derives each one's payload property.</summary>
     public JsonSchemaRegistry()
     {
         _schemas = new Dictionary<string, JsonDocument>(StringComparer.Ordinal)
@@ -27,6 +31,11 @@ public sealed class JsonSchemaRegistry
             [TailorCommandsSchemaName] = JsonDocument.Parse(TailorCommandsSchema),
             [FieldResolutionsSchemaName] = JsonDocument.Parse(FieldResolutionsSchema),
         }.ToFrozenDictionary();
+
+        _payloadPropertyNames = _schemas.ToDictionary(
+            kvp => kvp.Key,
+            kvp => DerivePayloadPropertyName(kvp.Key, kvp.Value.RootElement),
+            StringComparer.Ordinal).ToFrozenDictionary();
     }
 
     /// <summary>The names of every registered schema.</summary>
@@ -51,7 +60,82 @@ public sealed class JsonSchemaRegistry
             ? schema
             : throw new KeyNotFoundException($"No JSON schema is registered for '{schemaName}'.");
 
-    private const string TailorCommandsSchema = """
+    /// <summary>
+    /// The name of the single top-level property under which <paramref name="schemaName"/>
+    /// carries its actual payload (e.g. <c>"commands"</c> for <see cref="TailorCommandsSchemaName"/>).
+    /// OpenAI-style function calling requires a tool's <c>parameters</c> — and therefore this
+    /// registry's every schema — to be <c>type: "object"</c> at the top level, even though
+    /// the caller ultimately wants a bare array or other value out of it. Every language-model
+    /// client must unwrap this property before deserializing a response into the caller's
+    /// requested type, so this lives on the registry, next to the schema itself, rather than
+    /// being duplicated (and risking drift) in each client.
+    /// </summary>
+    public string GetPayloadPropertyName(string schemaName) =>
+        _payloadPropertyNames.TryGetValue(schemaName, out var name)
+            ? name
+            : throw new KeyNotFoundException($"No JSON schema is registered for '{schemaName}'.");
+
+    /// <summary>
+    /// Derives <paramref name="schemaName"/>'s payload property directly from its own
+    /// <c>properties</c> object rather than declaring it separately, so the schema and its
+    /// wrapper name can never drift apart: a single-property object schema has exactly one
+    /// possible payload property, by construction. A schema that ever needs more than one
+    /// top-level property fails fast here (at registry construction, i.e. process startup)
+    /// rather than silently guessing — at that point the payload property should be declared
+    /// explicitly instead.
+    /// </summary>
+    private static string DerivePayloadPropertyName(string schemaName, JsonElement schema)
+    {
+        if (!schema.TryGetProperty("properties", out var properties) || properties.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException($"Schema '{schemaName}' has no 'properties' object to derive a payload property from.");
+        }
+
+        var names = new List<string>();
+        foreach (var property in properties.EnumerateObject())
+        {
+            names.Add(property.Name);
+        }
+
+        return names.Count == 1
+            ? names[0]
+            : throw new InvalidOperationException(
+                $"Schema '{schemaName}' declares {names.Count} top-level properties; a payload property can only be " +
+                "derived automatically for a single-property object schema. Declare it explicitly instead.");
+    }
+
+    /// <summary>
+    /// Derives the exact set of legal wire values for <typeparamref name="TEnum"/> — the same
+    /// values <see cref="JsonStringEnumConverter"/> would actually produce, respecting any
+    /// per-member <see cref="JsonStringEnumMemberNameAttribute"/> override (see
+    /// <c>ResumeForge.Domain.Knowledge.KnowledgeSource.GitHub</c> for an example) and falling
+    /// back to <see cref="JsonNamingPolicy.CamelCase"/> otherwise, exactly like the global
+    /// converter every language-model client's <c>SerializerOptions</c> and the API host both
+    /// register. Schema `enum` constraints are built from this rather than hand-typed so a
+    /// new enum member can never silently go unconstrained: forgetting to add a member here
+    /// is impossible, because there's nothing to add — the list is recomputed from the enum
+    /// type itself every time the registry is constructed.
+    /// </summary>
+    private static string[] WireValuesOf<TEnum>() where TEnum : struct, Enum
+    {
+        var values = Enum.GetValues<TEnum>();
+        var wireValues = new string[values.Length];
+
+        for (var i = 0; i < values.Length; i++)
+        {
+            var member = typeof(TEnum).GetField(values[i].ToString())
+                ?? throw new InvalidOperationException($"Enum member '{values[i]}' of {typeof(TEnum)} has no backing field.");
+            var overrideName = member.GetCustomAttribute<JsonStringEnumMemberNameAttribute>()?.Name;
+            wireValues[i] = overrideName ?? JsonNamingPolicy.CamelCase.ConvertName(values[i].ToString());
+        }
+
+        return wireValues;
+    }
+
+    /// <summary>The legal <see cref="SectionKind"/> wire values, as a JSON array literal.</summary>
+    private static string SectionKindEnumJson => JsonSerializer.Serialize(WireValuesOf<SectionKind>());
+
+    private static readonly string TailorCommandsSchema = $$"""
         {
           "type": "object",
           "description": "The list of tailoring commands proposed for this run.",
@@ -141,7 +225,7 @@ public sealed class JsonSchemaRegistry
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "enum": ["summary", "skills", "experience", "projects", "education", "certifications"]
+                          "enum": {{SectionKindEnumJson}}
                         }
                       },
                       "rationale": { "type": ["string", "null"] }

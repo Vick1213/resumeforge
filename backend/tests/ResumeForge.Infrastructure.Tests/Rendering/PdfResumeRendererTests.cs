@@ -15,10 +15,18 @@ public sealed class PdfResumeRendererTests
     [Fact]
     public void Produces_a_nonempty_pdf_starting_with_the_pdf_magic_bytes()
     {
-        var bytes = _renderer.Render(RenderingTestData.Document());
+        var result = _renderer.Render(RenderingTestData.Document());
 
-        bytes.ShouldNotBeEmpty();
-        Encoding.ASCII.GetString(bytes, 0, 5).ShouldBe("%PDF-");
+        result.Content.ShouldNotBeEmpty();
+        Encoding.ASCII.GetString(result.Content, 0, 5).ShouldBe("%PDF-");
+    }
+
+    [Fact]
+    public void Reports_a_page_count_of_at_least_one()
+    {
+        var result = _renderer.Render(RenderingTestData.Document());
+
+        result.PageCount.ShouldBeGreaterThanOrEqualTo(1);
     }
 
     [Fact]
@@ -37,9 +45,9 @@ public sealed class PdfResumeRendererTests
             Certifications = [certification],
         };
 
-        var bytes = _renderer.Render(document);
+        var result = _renderer.Render(document);
 
-        bytes.ShouldNotBeEmpty();
+        result.Content.ShouldNotBeEmpty();
     }
 
     [Fact]
@@ -47,9 +55,9 @@ public sealed class PdfResumeRendererTests
     {
         var document = TestData.Document(sectionOrder: [SectionKind.Summary]);
 
-        var bytes = _renderer.Render(document);
+        var result = _renderer.Render(document);
 
-        bytes.ShouldNotBeEmpty();
-        Encoding.ASCII.GetString(bytes, 0, 5).ShouldBe("%PDF-");
+        result.Content.ShouldNotBeEmpty();
+        Encoding.ASCII.GetString(result.Content, 0, 5).ShouldBe("%PDF-");
     }
 }

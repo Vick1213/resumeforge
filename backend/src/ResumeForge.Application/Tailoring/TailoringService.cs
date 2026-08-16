@@ -21,8 +21,8 @@ public sealed class TailoringService(
         var graph = graphFactory.Create(request);
         var runResult = await executor.RunAsync(graph, services, ct).ConfigureAwait(false);
 
-        var executed = GetOutput<CommandExecutionResult>(runResult, TailoringGraphFactory.ExecuteCommands)
-            ?? throw new InvalidOperationException("Tailoring graph did not produce an execute-commands result.");
+        var budgeted = GetOutput<PageBudgetResult>(runResult, TailoringGraphFactory.EnforcePageBudget)
+            ?? throw new InvalidOperationException("Tailoring graph did not produce an enforce-page-budget result.");
 
         var validation = GetOutput<CommandValidationResult>(runResult, TailoringGraphFactory.ValidateCommands)
             ?? throw new InvalidOperationException("Tailoring graph did not produce a validate-commands result.");
@@ -32,12 +32,14 @@ public sealed class TailoringService(
 
         return new TailoringResult
         {
-            Document = executed.Document,
-            Diff = executed.Diff,
+            Document = budgeted.Document,
+            Diff = budgeted.Diff,
             Commands = validation,
             Coverage = coverage,
             Usage = runResult.Usage,
             Trace = runResult.Trace,
+            PageCount = budgeted.PageCount,
+            FitsBudget = budgeted.FitsBudget,
         };
     }
 

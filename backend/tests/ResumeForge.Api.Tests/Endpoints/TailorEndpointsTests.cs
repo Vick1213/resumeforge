@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 using ResumeForge.Api.Contracts;
 using ResumeForge.Api.Tests.TestSupport;
+using ResumeForge.Application.Abstractions;
 using ResumeForge.Application.Analysis;
 using ResumeForge.Application.Graph;
 using ResumeForge.Application.Tailoring;
@@ -141,6 +144,59 @@ public sealed class TailorEndpointsTests(ResumeForgeApiFactory factory)
         TestJson.Options);
 
     [Fact]
+    public async Task A_malformed_proposed_command_is_rejected_instead_of_failing_the_whole_run()
+    {
+        // Reproduces the live failure this fix responds to: a real provider proposed a run
+        // of otherwise-good commands plus one setSectionOrder whose order named something
+        // that isn't a legal SectionKind. That used to throw out of JsonSerializer.Deserialize
+        // and take the entire run down as an HTTP 500 with nothing at all returned — even
+        // though every other command was perfectly good. It must now come back as HTTP 200
+        // with the good command applied and the bad one reported as a "malformed-command"
+        // rejection (CONTRACTS.md §6: rejected, never silently dropped, and never allowed to
+        // sink commands around it).
+        var parseResults = new TailorCommandParseResultList(
+        [
+            new TailorCommandParseResult.Parsed(new SetSummaryCommand { Text = "A concise, tailored summary." }),
+            new TailorCommandParseResult.Malformed(
+                1,
+                """{"op":"setSectionOrder","order":["engineering","skills","experience","projects","education","certifications"]}""",
+                "The JSON value could not be converted to ResumeForge.Domain.Resume.SectionKind. Path: $.order[0]."),
+        ]);
+
+        var languageModel = Substitute.For<ILanguageModel>();
+        languageModel
+            .CompleteAsync<TailorCommandParseResultList>(Arg.Any<ModelRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new ModelResponse<TailorCommandParseResultList>
+            {
+                Value = parseResults,
+                Usage = TokenUsage.Empty,
+                FromCache = false,
+            }));
+
+        using var scopedFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services => services.AddScoped<ILanguageModel>(_ => languageModel)));
+        using var client = scopedFactory.CreateClient();
+
+        var jobId = await CreateJobAsync(client);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor", new TailorRequest { JobId = jobId, DryRun = true }, TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+        result.ShouldNotBeNull();
+
+        result.Commands.Accepted.ShouldContain(c => c is SetSummaryCommand);
+
+        var rejection = result.Commands.Rejected.ShouldHaveSingleItem();
+        rejection.Code.ShouldBe("malformed-command");
+        rejection.Command.ShouldBeNull();
+        rejection.Reason.ShouldContain("SectionKind");
+
+        result.Document.Summary.ShouldBe("A concise, tailored summary.");
+    }
+
+    [Fact]
     public async Task Tailor_for_unknown_job_returns_404()
     {
         using var client = factory.CreateClient();
@@ -219,6 +275,86 @@ public sealed class TailorEndpointsTests(ResumeForgeApiFactory factory)
         result.Document.Name.ShouldBe("Senior Backend Engineer at Nimbus Systems");
         result.Document.Name.ShouldNotContain(jobId);
         Guid.TryParse(result.Document.Name, out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task A_posting_whose_opening_sentence_is_corporate_boilerplate_does_not_get_a_truncated_name()
+    {
+        // Regression: a real posting's raw text opened with "JT4, LLC provides engineering
+        // and technical support to multiple western test ranges under the Test and
+        // Training Range Contract." — corporate boilerplate, not a role title, and long
+        // enough that the old naming fallback blindly character-truncated it into
+        // "JT4, LLC provides engineering and technical support to multiple western test
+        // ra…", a fragment chopped mid-word. It must now recognize the sentence isn't a
+        // title and fall back to something sane instead — never that fragment, never a
+        // truncated ellipsis, never a bare GUID.
+        using var client = factory.CreateClient();
+
+        const string rawText =
+            "JT4, LLC provides engineering and technical support to multiple western test " +
+            "ranges under the Test and Training Range Contract.\n\n" +
+            "Requirements: 5+ years of experience with C# and PostgreSQL.";
+        var jobId = await CreateJobAsync(client, rawText);
+
+        using var baseResponse = await client.PostAsync("/api/resumes/base", content: null);
+        (await baseResponse.Content.ReadFromJsonAsync<ResumeDocument>(TestJson.Options)).ShouldNotBeNull();
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor", new TailorRequest { JobId = jobId, DryRun = false }, TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+        result.ShouldNotBeNull();
+
+        const string reportedBrokenName =
+            "JT4, LLC provides engineering and technical support to multiple western test ra…";
+
+        result.Document.Name.ShouldNotBe(reportedBrokenName);
+        result.Document.Name.ShouldNotEndWith("…");
+        result.Document.Name.ShouldNotContain(jobId);
+        Guid.TryParse(result.Document.Name, out _).ShouldBeFalse();
+        result.Document.Name.ShouldContain("JT4");
+    }
+
+    [Fact]
+    public async Task Tailoring_result_reports_a_page_count_and_fits_the_default_budget()
+    {
+        // End-to-end wiring check for CONTRACTS.md §6 "Page budget": the small fixture
+        // profile easily fits the default two-page budget, so this only asserts that the
+        // graph's enforce-page-budget node actually ran and surfaced a real page count —
+        // never a specific page count for a specific content fixture, which typography
+        // tuning could change out from under this test.
+        using var client = factory.CreateClient();
+
+        var jobId = await CreateJobAsync(client);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor", new TailorRequest { JobId = jobId, DryRun = true }, TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+        result.ShouldNotBeNull();
+
+        result.PageCount.ShouldBeGreaterThanOrEqualTo(1);
+        result.FitsBudget.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Max_pages_null_disables_page_budget_trimming_end_to_end()
+    {
+        using var client = factory.CreateClient();
+
+        var jobId = await CreateJobAsync(client);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor", new TailorRequest { JobId = jobId, MaxPages = null, DryRun = true }, TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+        result.ShouldNotBeNull();
+
+        result.FitsBudget.ShouldBeTrue();
+        result.Diff.ShouldNotContain(d => d.Rationale != null && d.Rationale.Contains("budget", StringComparison.OrdinalIgnoreCase));
     }
 
     private static Task<string> CreateJobAsync(HttpClient client) => CreateJobAsync(client, SamplePosting);

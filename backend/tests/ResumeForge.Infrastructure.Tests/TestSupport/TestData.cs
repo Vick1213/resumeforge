@@ -222,6 +222,8 @@ public static class TestData
         Coverage = new CoverageReport { Score = 1.0, Requirements = [] },
         Usage = TokenUsage.Empty,
         Trace = trace ?? [],
+        PageCount = 1,
+        FitsBudget = true,
     };
 
     public static GraphNodeTrace Trace(string node, GraphNodeStatus status = GraphNodeStatus.Succeeded) => new()

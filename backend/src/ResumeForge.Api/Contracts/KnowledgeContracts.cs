@@ -96,8 +96,13 @@ public sealed record UpsertKnowledgeRequest
 /// <summary>
 /// Request body for <c>POST /api/knowledge/import/github</c>. When <see cref="Commit"/> is
 /// false, this previews the given repositories (or every repository the user owns, when
-/// <see cref="RepositoryNames"/> is empty) without writing anything; when true, it commits
-/// them as knowledge-base project files.
+/// <see cref="Repos"/> is empty) without writing anything; when true, it commits
+/// them as knowledge-base project files. CONTRACTS.md §9 names this type but does not define
+/// its shape; per the frontend integration ruling, <c>frontend/src/api/types.ts</c> is
+/// authoritative for shapes CONTRACTS.md leaves undefined, so this mirrors its
+/// <c>GitHubImportRequest</c> exactly — including naming this <see cref="Repos"/>, matching
+/// <see cref="GitHubImportResult.Repos"/>, rather than the differently-named
+/// <c>RepositoryNames</c> this type used to declare.
 /// </summary>
 public sealed record GitHubImportRequest
 {
@@ -105,7 +110,7 @@ public sealed record GitHubImportRequest
     public required string Username { get; init; }
 
     /// <summary>Repository names to act on. Empty with <see cref="Commit"/> false previews everything available.</summary>
-    public required IReadOnlyList<string> RepositoryNames { get; init; }
+    public required IReadOnlyList<string> Repos { get; init; }
 
     /// <summary>When true, writes the previewed repositories to the knowledge base; when false, only previews them.</summary>
     public required bool Commit { get; init; }

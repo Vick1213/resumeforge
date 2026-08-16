@@ -336,4 +336,56 @@ public sealed class CommandValidatorTests
         result.Accepted.Count.ShouldBe(3);
         result.Rejected.ShouldBeEmpty();
     }
+
+    // --- IReadOnlyList<TailorCommandParseResult> overload (CONTRACTS.md §6: a command the
+    // model malformed is rejected, never allowed to sink the run around it) ---
+
+    [Fact]
+    public void A_malformed_parse_result_is_rejected_with_malformed_command_code_and_a_null_command()
+    {
+        var doc = NewDocument();
+        var malformed = new TailorCommandParseResult.Malformed(0, """{"op":"setSectionOrder","order":["nope"]}""", "bad enum value");
+
+        var result = _validator.Validate([malformed], doc, Options());
+
+        result.Accepted.ShouldBeEmpty();
+        var rejection = result.Rejected.ShouldHaveSingleItem();
+        rejection.Code.ShouldBe("malformed-command");
+        rejection.Command.ShouldBeNull();
+        rejection.Reason.ShouldContain("bad enum value");
+    }
+
+    [Fact]
+    public void A_malformed_element_does_not_prevent_a_well_formed_sibling_from_being_validated_normally()
+    {
+        var doc = NewDocument();
+        var goodCommand = new IncludeCommand { Targets = ["exp:acme"] };
+        var badCommand = new IncludeCommand { Targets = ["exp:ghost"] };
+        var parseResults = new TailorCommandParseResult[]
+        {
+            new TailorCommandParseResult.Parsed(goodCommand),
+            new TailorCommandParseResult.Malformed(1, "{}", "deserialization failed"),
+            new TailorCommandParseResult.Parsed(badCommand),
+        };
+
+        var result = _validator.Validate(parseResults, doc, Options());
+
+        result.Accepted.ShouldBe([goodCommand]);
+        result.Rejected.Count.ShouldBe(2);
+        result.Rejected.ShouldContain(r => r.Code == "malformed-command" && r.Command == null);
+        result.Rejected.ShouldContain(r => r.Code == "unknown-target" && ReferenceEquals(r.Command, badCommand));
+    }
+
+    [Fact]
+    public void No_malformed_elements_behaves_exactly_like_the_TailorCommand_overload()
+    {
+        var doc = NewDocument();
+        var command = new IncludeCommand { Targets = ["exp:acme"] };
+
+        var viaParseResults = _validator.Validate([new TailorCommandParseResult.Parsed(command)], doc, Options());
+        var viaCommands = _validator.Validate([command], doc, Options());
+
+        viaParseResults.Accepted.ShouldBe(viaCommands.Accepted);
+        viaParseResults.Rejected.ShouldBe(viaCommands.Rejected);
+    }
 }

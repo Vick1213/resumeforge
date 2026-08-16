@@ -39,6 +39,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IFabricationGuard, FabricationGuard>();
         services.TryAddSingleton<ICommandExecutor, CommandExecutor>();
         services.TryAddSingleton<ICoverageAnalyzer, CoverageAnalyzer>();
+        services.TryAddSingleton<IPageBudgetEnforcer, PageBudgetEnforcer>();
         services.TryAddSingleton<IResumeBuilder, ResumeBuilder>();
         services.TryAddSingleton<IBriefBuilder, BriefBuilder>();
         // Scoped, not Singleton: the constructor depends on several Scoped Infrastructure

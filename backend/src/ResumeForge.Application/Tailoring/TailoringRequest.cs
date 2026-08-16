@@ -18,6 +18,13 @@ public sealed record TailoringRequest
     /// behaviour maps to — an omitted effort must reproduce the exact prior output.
     /// </summary>
     public ModelEffort Effort { get; init; } = ModelEffort.Standard;
+
+    /// <summary>
+    /// Overrides <see cref="TailorOptions.MaxPages"/> for this run only (CONTRACTS.md §6
+    /// "Page budget"). Defaults to <c>2</c>, matching <see cref="TailorOptions.MaxPages"/>'s
+    /// own default; an explicit <c>null</c> disables page-budget trimming entirely.
+    /// </summary>
+    public int? MaxPages { get; init; } = 2;
 }
 
 /// <summary>

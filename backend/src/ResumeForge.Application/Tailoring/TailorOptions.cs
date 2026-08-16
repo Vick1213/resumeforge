@@ -27,4 +27,23 @@ public sealed record TailorOptions
     /// settable here since an explicit override always wins.
     /// </summary>
     public ModelEffort Effort { get; init; } = ModelEffort.Standard;
+
+    /// <summary>
+    /// The rendered page budget for a tailoring run (CONTRACTS.md §6 "Page budget"). While
+    /// the rendered document exceeds this many pages, <see cref="IPageBudgetEnforcer"/>
+    /// excludes the single lowest-scoring still-included entry and re-renders. Defaults to
+    /// <c>2</c>; <c>null</c> disables trimming entirely.
+    /// </summary>
+    public int? MaxPages { get; init; } = 2;
+
+    /// <summary>
+    /// Hard ceiling on the number of render-and-cut passes <see cref="IPageBudgetEnforcer"/>
+    /// will perform for one run, regardless of how many cuttable entries the document has.
+    /// Each pass removes exactly one entry, so the loop is already bounded by the number of
+    /// cuttable entries in the document; this is a second, explicit ceiling so an
+    /// adversarially large knowledge base can never force an unbounded number of renders.
+    /// Fifty passes comfortably covers any realistic resume (far more entries than a page
+    /// budget would ever need to cut) while keeping a pathological input's worst case cheap.
+    /// </summary>
+    public int MaxPageBudgetPasses { get; init; } = 50;
 }

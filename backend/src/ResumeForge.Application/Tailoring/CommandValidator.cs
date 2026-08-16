@@ -21,6 +21,10 @@ namespace ResumeForge.Application.Tailoring;
 /// <c>op-unavailable-at-effort</c> below <see cref="ModelEffort.Thorough"/>. This rule
 /// never relaxes at any effort level.</item>
 /// </list>
+/// The <see cref="Validate(IReadOnlyList{TailorCommandParseResult}, ResumeDocument, TailorOptions)"/>
+/// overload additionally rejects, with code <c>malformed-command</c>, any array element the
+/// model sent that never deserialized into a <see cref="TailorCommand"/> at all — see
+/// <see cref="TailorCommandParseResult"/>.
 /// </summary>
 public sealed class CommandValidator(IFabricationGuard fabricationGuard) : ICommandValidator
 {
@@ -51,6 +55,42 @@ public sealed class CommandValidator(IFabricationGuard fabricationGuard) : IComm
         ApplyRewriteLimit(accepted, rejected, options);
 
         return new CommandValidationResult { Accepted = accepted, Rejected = rejected };
+    }
+
+    /// <inheritdoc />
+    public CommandValidationResult Validate(IReadOnlyList<TailorCommandParseResult> parseResults, ResumeDocument document, TailorOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(parseResults);
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(options);
+
+        var malformed = new List<RejectedCommand>();
+        var parsed = new List<TailorCommand>();
+
+        foreach (var result in parseResults)
+        {
+            switch (result)
+            {
+                case TailorCommandParseResult.Parsed p:
+                    parsed.Add(p.Command);
+                    break;
+
+                case TailorCommandParseResult.Malformed m:
+                    malformed.Add(new RejectedCommand
+                    {
+                        Command = null,
+                        Reason = $"Command at index {m.Index} could not be parsed: {m.Error}",
+                        Code = "malformed-command",
+                    });
+                    break;
+            }
+        }
+
+        var validated = Validate(parsed, document, options);
+
+        return malformed.Count == 0
+            ? validated
+            : validated with { Rejected = [.. malformed, .. validated.Rejected] };
     }
 
     private static void ApplyRewriteLimit(List<TailorCommand> accepted, List<RejectedCommand> rejected, TailorOptions options)

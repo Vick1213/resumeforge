@@ -37,14 +37,22 @@ public sealed class ResumeRenderer(
                 ContentType = "text/html; charset=utf-8",
                 FileName = $"{baseName}.html",
             }),
-            RenderFormat.Pdf => Task.FromResult(new RenderedDocument
-            {
-                Content = pdfRenderer.Render(doc),
-                ContentType = "application/pdf",
-                FileName = $"{baseName}.pdf",
-            }),
+            RenderFormat.Pdf => Task.FromResult(RenderPdf(doc, baseName)),
             RenderFormat.Docx => throw new NotSupportedException("DOCX rendering is not supported in this version."),
             _ => throw new ArgumentOutOfRangeException(nameof(format), format, "Unknown render format."),
+        };
+    }
+
+    private RenderedDocument RenderPdf(ResumeDocument doc, string baseName)
+    {
+        var rendered = pdfRenderer.Render(doc);
+
+        return new RenderedDocument
+        {
+            Content = rendered.Content,
+            ContentType = "application/pdf",
+            FileName = $"{baseName}.pdf",
+            PageCount = rendered.PageCount,
         };
     }
 

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using ResumeForge.Application.Abstractions;
 
@@ -30,6 +31,7 @@ public sealed class AnthropicLanguageModel(
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
     /// <inheritdoc />
@@ -66,7 +68,8 @@ public sealed class AnthropicLanguageModel(
 
             try
             {
-                var value = JsonSerializer.Deserialize<T>(toolInputJson, SerializerOptions)
+                var payloadJson = UnwrapPayload(toolInputJson, request.SchemaName, schemaRegistry);
+                var value = JsonSerializer.Deserialize<T>(payloadJson, SerializerOptions)
                     ?? throw new JsonException("Model response deserialized to null.");
 
                 return new ModelResponse<T> { Value = value, Usage = totalUsage, FromCache = false };
@@ -169,5 +172,29 @@ public sealed class AnthropicLanguageModel(
     {
         var envKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
         return !string.IsNullOrWhiteSpace(envKey) ? envKey : options.ApiKey;
+    }
+
+    /// <summary>
+    /// Unwraps <paramref name="resultJson"/>'s schema-declared payload property (see
+    /// <see cref="JsonSchemaRegistry.GetPayloadPropertyName"/>) before the caller deserializes
+    /// into its requested <c>T</c>. The tool's <c>input_schema</c> is necessarily
+    /// <c>type: "object"</c> (Anthropic's tool-use, like OpenAI's function calling, requires
+    /// it), so the model's <c>tool_use.input</c> always carries the actual payload one level
+    /// down, under this property. A response that isn't the expected object shape is surfaced
+    /// as a <see cref="JsonException"/>, exactly like any other schema-validation failure, so
+    /// it flows through the same retry machinery.
+    /// </summary>
+    private static string UnwrapPayload(string resultJson, string schemaName, JsonSchemaRegistry schemaRegistry)
+    {
+        var payloadProperty = schemaRegistry.GetPayloadPropertyName(schemaName);
+
+        using var doc = JsonDocument.Parse(resultJson);
+        if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty(payloadProperty, out var payload))
+        {
+            throw new JsonException(
+                $"Model response for schema '{schemaName}' was not an object carrying a '{payloadProperty}' property.");
+        }
+
+        return payload.GetRawText();
     }
 }

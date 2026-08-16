@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging.Abstractions;
 using ResumeForge.Application.Abstractions;
+using ResumeForge.Application.Tailoring;
+using ResumeForge.Domain.Resume;
 using ResumeForge.Infrastructure.Ai;
 using ResumeForge.Infrastructure.Tests.TestSupport;
 using Shouldly;
@@ -72,6 +74,109 @@ public sealed class OpenAiCompatibleLanguageModelTests
         response.Usage.InputTokens.ShouldBe(10);
         response.Usage.OutputTokens.ShouldBe(5);
         response.Usage.ModelCalls.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Deserializes_tailor_commands_from_the_schema_wrapped_forced_tool_call_arguments()
+    {
+        // This is the shape a real provider actually sends for "tailor-commands": an object
+        // wrapper carrying "commands", because OpenAI-style function calling requires a
+        // tool's parameters to be type: "object" — a bare top-level array is not legal there.
+        var model = NewModel(new AiOptions { Provider = "deepseek", Model = "deepseek-chat" }, request =>
+            ToolCallResponseWithArguments("""
+                {"commands":[
+                    {"op":"include","targets":["exp:acme"],"rationale":"Best match."},
+                    {"op":"setSummary","text":"A concise summary."}
+                ]}
+                """));
+
+        var request = new ModelRequest
+        {
+            System = "You propose tailoring commands.",
+            User = "some brief",
+            SchemaName = JsonSchemaRegistry.TailorCommandsSchemaName,
+        };
+
+        var response = await model.CompleteAsync<IReadOnlyList<TailorCommand>>(request, CancellationToken.None);
+
+        response.Value.Count.ShouldBe(2);
+        var include = response.Value[0].ShouldBeOfType<IncludeCommand>();
+        include.Targets.ShouldBe(["exp:acme"]);
+        response.Value[1].ShouldBeOfType<SetSummaryCommand>().Text.ShouldBe("A concise summary.");
+    }
+
+    [Fact]
+    public async Task Deserializes_a_setSectionOrder_command_whose_order_is_a_SectionKind_enum()
+    {
+        // Regression test for the exact crash a live DeepSeek run hit: this client's own
+        // SerializerOptions (distinct from the API host's global one, and from every other
+        // ILanguageModel implementation's) had no JsonStringEnumConverter registered, so *no*
+        // string ever converted to SectionKind — not even a legal one — the instant a
+        // provider proposed a setSectionOrder command.
+        var model = NewModel(new AiOptions { Provider = "deepseek", Model = "deepseek-chat" }, request =>
+            ToolCallResponseWithArguments("""
+                {"commands":[
+                    {"op":"setSectionOrder","order":["experience","projects","skills","summary","education","certifications"]}
+                ]}
+                """));
+
+        var request = new ModelRequest
+        {
+            System = "You propose tailoring commands.",
+            User = "some brief",
+            SchemaName = JsonSchemaRegistry.TailorCommandsSchemaName,
+        };
+
+        var response = await model.CompleteAsync<IReadOnlyList<TailorCommand>>(request, CancellationToken.None);
+
+        var order = response.Value.Single().ShouldBeOfType<SetSectionOrderCommand>().Order;
+        order.ShouldBe([
+            SectionKind.Experience, SectionKind.Projects, SectionKind.Skills,
+            SectionKind.Summary, SectionKind.Education, SectionKind.Certifications,
+        ]);
+    }
+
+    [Fact]
+    public async Task Deserializes_field_resolutions_from_the_schema_wrapped_forced_tool_call_arguments()
+    {
+        // Same defect, same fix, for "field-resolutions": a real provider wraps the array in
+        // {"resolutions": [...]}, not a bare array.
+        var model = NewModel(new AiOptions { Provider = "deepseek", Model = "deepseek-chat" }, request =>
+            ToolCallResponseWithArguments("""
+                {"resolutions":[
+                    {"elementId":"el-1","canonicalKey":"email","confidence":0.9,"optionValue":null},
+                    {"elementId":"el-2","canonicalKey":"","confidence":0.0}
+                ]}
+                """));
+
+        var response = await model.CompleteAsync<IReadOnlyList<FieldResolutionPayload>>(NewRequest(), CancellationToken.None);
+
+        response.Value.Count.ShouldBe(2);
+        response.Value[0].ElementId.ShouldBe("el-1");
+        response.Value[0].CanonicalKey.ShouldBe("email");
+        response.Value[0].Confidence.ShouldBe(0.9);
+        response.Value[1].CanonicalKey.ShouldBe(string.Empty);
+    }
+
+    [Fact]
+    public async Task Deserializes_the_schema_wrapped_payload_via_the_json_schema_strategy_too()
+    {
+        // The unwrap applies to every structured-output strategy, not just the forced tool
+        // call — json_schema's response_format content is the same object-wrapped shape.
+        var model = NewModel(
+            new AiOptions { Provider = "lmstudio", Model = "qwen3-8b", StructuredOutput = "json_schema" },
+            request => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                    {"choices":[{"message":{"content":"{\"resolutions\":[{\"elementId\":\"el-1\",\"canonicalKey\":\"email\",\"confidence\":0.9}]}"}}],
+                     "usage":{"prompt_tokens":10,"completion_tokens":5}}
+                    """),
+            });
+
+        var response = await model.CompleteAsync<IReadOnlyList<FieldResolutionPayload>>(NewRequest(), CancellationToken.None);
+
+        response.Value.Count.ShouldBe(1);
+        response.Value[0].ElementId.ShouldBe("el-1");
     }
 
     [Fact]
@@ -178,12 +283,45 @@ public sealed class OpenAiCompatibleLanguageModelTests
     }
 
     [Fact]
-    public async Task Throws_after_a_second_schema_mismatch_on_the_same_strategy()
+    public async Task Falls_through_to_the_next_strategy_after_repeated_schema_validation_failure()
     {
+        // Well-formed JSON that never satisfies the schema wrapper (no "resolutions"
+        // property) on the forced-tool-call rung should exhaust its retry, then drop to
+        // json_schema — the same way a protocol-level rejection would — rather than failing
+        // the whole run outright.
+        var calls = new List<StrategyKind>();
         var model = NewModel(new AiOptions { Provider = "deepseek", Model = "deepseek-chat" }, request =>
-            ToolCallResponseWithArguments("""{"unrelated":"shape"}"""));
+        {
+            var kind = ClassifyStrategy(request);
+            calls.Add(kind);
+            return kind == StrategyKind.ForcedToolCall
+                ? ToolCallResponseWithArguments("""{"unrelated":"shape"}""")
+                : JsonSchemaResponse();
+        });
+
+        var response = await model.CompleteAsync<TestPayload>(NewRequest(), CancellationToken.None);
+
+        response.Value.Foo.ShouldBe("bar");
+        calls.ShouldBe([StrategyKind.ForcedToolCall, StrategyKind.ForcedToolCall, StrategyKind.JsonSchema]);
+    }
+
+    [Fact]
+    public async Task A_pinned_strategy_throws_after_a_second_schema_mismatch_instead_of_falling_through()
+    {
+        var calls = new List<StrategyKind>();
+        var model = NewModel(
+            new AiOptions { Provider = "deepseek", Model = "deepseek-chat", StructuredOutput = "tool" },
+            request =>
+            {
+                calls.Add(ClassifyStrategy(request));
+                return ToolCallResponseWithArguments("""{"unrelated":"shape"}""");
+            });
 
         await Should.ThrowAsync<InvalidOperationException>(() => model.CompleteAsync<TestPayload>(NewRequest(), CancellationToken.None));
+
+        // Never drops to json_schema even though it exists further down the ladder: a pinned
+        // strategy is an explicit override, not a starting point for the ladder.
+        calls.ShouldBe([StrategyKind.ForcedToolCall, StrategyKind.ForcedToolCall]);
     }
 
     [Fact]
@@ -192,7 +330,7 @@ public sealed class OpenAiCompatibleLanguageModelTests
         var model = NewModel(new AiOptions { Provider = "deepseek", Model = "deepseek-chat" }, request => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent("""
-                {"choices":[{"message":{"tool_calls":[{"function":{"name":"emit_result","arguments":"{\"foo\":\"bar\"}"}}]}}],
+                {"choices":[{"message":{"tool_calls":[{"function":{"name":"emit_result","arguments":"{\"resolutions\":{\"foo\":\"bar\"}}"}}]}}],
                  "usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_cache_hit_tokens":80}}
                 """),
         });
@@ -208,7 +346,7 @@ public sealed class OpenAiCompatibleLanguageModelTests
         var model = NewModel(new AiOptions { Provider = "openai", Model = "gpt-4o" }, request => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent("""
-                {"choices":[{"message":{"tool_calls":[{"function":{"name":"emit_result","arguments":"{\"foo\":\"bar\"}"}}]}}],
+                {"choices":[{"message":{"tool_calls":[{"function":{"name":"emit_result","arguments":"{\"resolutions\":{\"foo\":\"bar\"}}"}}]}}],
                  "usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":64}}}
                 """),
         });
@@ -273,7 +411,11 @@ public sealed class OpenAiCompatibleLanguageModelTests
         };
     }
 
-    private static HttpResponseMessage ForcedToolCallResponse() => ToolCallResponseWithArguments("""{"foo":"bar"}""");
+    // Every mocked response below is wrapped exactly as JsonSchemaRegistry.FieldResolutionsSchema
+    // declares — {"resolutions": ...} — because that is what a real provider sends: an OpenAI-
+    // style tool's "parameters" (and json_schema's "schema") must be type: "object" at the top
+    // level, so the model's payload always arrives one property down, never as a bare value.
+    private static HttpResponseMessage ForcedToolCallResponse() => ToolCallResponseWithArguments("""{"resolutions":{"foo":"bar"}}""");
 
     private static HttpResponseMessage ToolCallResponseWithArguments(string argumentsJson)
     {
@@ -294,7 +436,7 @@ public sealed class OpenAiCompatibleLanguageModelTests
     private static HttpResponseMessage JsonSchemaResponse() => new(HttpStatusCode.OK)
     {
         Content = new StringContent("""
-            {"choices":[{"message":{"content":"{\"foo\":\"bar\"}"}}],
+            {"choices":[{"message":{"content":"{\"resolutions\":{\"foo\":\"bar\"}}"}}],
              "usage":{"prompt_tokens":10,"completion_tokens":5}}
             """),
     };
@@ -304,5 +446,21 @@ public sealed class OpenAiCompatibleLanguageModelTests
     private sealed record TestPayload
     {
         public required string Foo { get; init; }
+    }
+
+    /// <summary>
+    /// Wire shape matching the <c>"field-resolutions"</c> JSON schema
+    /// (<see cref="JsonSchemaRegistry"/>), local to this test file since Infrastructure has no
+    /// reference to the Api layer's own <c>FieldResolution</c> contract type.
+    /// </summary>
+    private sealed record FieldResolutionPayload
+    {
+        public required string ElementId { get; init; }
+
+        public required string CanonicalKey { get; init; }
+
+        public required double Confidence { get; init; }
+
+        public string? OptionValue { get; init; }
     }
 }

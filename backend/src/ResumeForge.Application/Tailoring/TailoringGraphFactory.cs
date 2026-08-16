@@ -30,6 +30,7 @@ public sealed class TailoringGraphFactory(
     ICommandExecutor commandExecutor,
     ICoverageAnalyzer coverageAnalyzer,
     IResumeRenderer resumeRenderer,
+    IPageBudgetEnforcer pageBudgetEnforcer,
     TailorOptions tailorOptions) : ITailoringGraphFactory
 {
     /// <summary>Node name: loads the persisted job posting for the run.</summary>
@@ -70,6 +71,12 @@ public sealed class TailoringGraphFactory(
 
     /// <summary>Node name: applies accepted commands to the base resume.</summary>
     public const string ExecuteCommands = "execute-commands";
+
+    /// <summary>
+    /// Node name: deterministically trims the executed document to
+    /// <see cref="TailorOptions.MaxPages"/> (CONTRACTS.md §6 "Page budget").
+    /// </summary>
+    public const string EnforcePageBudget = "enforce-page-budget";
 
     /// <summary>Node name: renders the tailored document.</summary>
     public const string Render = "render";
@@ -159,7 +166,11 @@ public sealed class TailoringGraphFactory(
                     CacheKey = $"tailor:{request.JobId}:{request.BaseResumeId}",
                 };
 
-                var response = await languageModel.CompleteAsync<IReadOnlyList<TailorCommand>>(modelRequest, ct).ConfigureAwait(false);
+                // Requests TailorCommandParseResultList rather than IReadOnlyList<TailorCommand>
+                // directly so one command the model malformed becomes a rejection instead of an
+                // exception that discards every other, perfectly good, command it proposed
+                // (CONTRACTS.md §6) — see TailorCommandParseResult.
+                var response = await languageModel.CompleteAsync<TailorCommandParseResultList>(modelRequest, ct).ConfigureAwait(false);
                 ctx.Budget.Record(ProposeCommands, response.Usage);
                 return (object?)response.Value;
             })
@@ -169,8 +180,8 @@ public sealed class TailoringGraphFactory(
             .AddNode(ValidateCommands, (ctx, _) =>
             {
                 var doc = ctx.Get<ResumeDocument>(BuildBase);
-                var commands = ctx.Get<IReadOnlyList<TailorCommand>>(ProposeCommands);
-                return Task.FromResult<object?>(commandValidator.Validate(commands, doc, options));
+                var parseResults = ctx.Get<TailorCommandParseResultList>(ProposeCommands);
+                return Task.FromResult<object?>(commandValidator.Validate(parseResults, doc, options));
             })
             .DependsOn(BuildBase, ProposeCommands)
             .Critical()
@@ -202,13 +213,30 @@ public sealed class TailoringGraphFactory(
             .DependsOn(ValidateCommands)
             .Critical()
 
-            .AddNode(Render, async (ctx, ct) =>
+            .AddNode(EnforcePageBudget, async (ctx, ct) =>
             {
                 var executed = ctx.Get<CommandExecutionResult>(ExecuteCommands);
-                var rendered = await resumeRenderer.RenderAsync(executed.Document, RenderFormat.Html, ct).ConfigureAwait(false);
+                var candidates = new CandidateSet
+                {
+                    Experience = ctx.Get<IReadOnlyList<ScoredCandidate>>(ScoreExperience),
+                    Projects = ctx.Get<IReadOnlyList<ScoredCandidate>>(ScoreProjects),
+                    Skills = ctx.Get<IReadOnlyList<ScoredCandidate>>(ScoreSkills),
+                };
+
+                var result = await pageBudgetEnforcer
+                    .EnforceAsync(executed.Document, executed.Diff, candidates, options, ct)
+                    .ConfigureAwait(false);
+                return (object?)result;
+            })
+            .DependsOn(ExecuteCommands, ScoreExperience, ScoreProjects, ScoreSkills)
+
+            .AddNode(Render, async (ctx, ct) =>
+            {
+                var budgeted = ctx.Get<PageBudgetResult>(EnforcePageBudget);
+                var rendered = await resumeRenderer.RenderAsync(budgeted.Document, RenderFormat.Html, ct).ConfigureAwait(false);
                 return (object?)rendered;
             })
-            .DependsOn(VerifyFabrication, VerifyCoverage, ExecuteCommands)
+            .DependsOn(VerifyFabrication, VerifyCoverage, EnforcePageBudget)
 
             .Build();
     }

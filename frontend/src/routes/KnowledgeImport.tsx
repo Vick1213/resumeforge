@@ -28,7 +28,9 @@ export default function KnowledgeImport() {
       {
         onSuccess: (result) => {
           setRepos(result.repos);
-          setSelected(new Set(result.repos.map((repo) => repo.repoName)));
+          // Nothing is preselected on purpose: a resume wants a chosen few projects, not
+          // every public repository. Importing everything should take deliberate effort.
+          setSelected(new Set());
           setPreviewName(result.repos[0]?.repoName);
         },
       },
@@ -124,7 +126,22 @@ export default function KnowledgeImport() {
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-[var(--text)]">{repos.length} repositories found</h2>
-              <span className="text-xs text-[var(--text-muted)]">{selected.size} selected</span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-[var(--text-muted)]">{selected.size} selected</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelected(
+                      selected.size === repos.length
+                        ? new Set()
+                        : new Set(repos.map((repo) => repo.repoName)),
+                    )
+                  }
+                  className="text-xs font-medium text-[var(--accent)]"
+                >
+                  {selected.size === repos.length ? 'Select none' : 'Select all'}
+                </button>
+              </div>
             </div>
             <ul className="flex flex-col gap-2">
               {repos.map((repo) => {

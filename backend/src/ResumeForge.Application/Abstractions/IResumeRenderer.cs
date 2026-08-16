@@ -39,4 +39,11 @@ public sealed record RenderedDocument
 
     /// <summary>The suggested download file name.</summary>
     public required string FileName { get; init; }
+
+    /// <summary>
+    /// The number of rendered pages, for formats where pagination is meaningful
+    /// (<see cref="RenderFormat.Pdf"/>). Null for formats with no fixed page size
+    /// (<see cref="RenderFormat.Html"/>, <see cref="RenderFormat.Markdown"/>).
+    /// </summary>
+    public int? PageCount { get; init; }
 }

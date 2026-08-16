@@ -497,7 +497,7 @@ public sealed class MarkdownKnowledgeBaseReader(
 
     private static KnowledgeBaseDiagnostic Diag(string filePath, int line, string message, DiagnosticSeverity severity) => new()
     {
-        FilePath = filePath,
+        File = filePath,
         Line = line,
         Message = message,
         Severity = severity,

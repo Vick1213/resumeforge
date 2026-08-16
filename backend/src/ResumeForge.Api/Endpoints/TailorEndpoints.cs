@@ -57,6 +57,7 @@ public static class TailorEndpoints
             BaseResumeId = request.BaseResumeId,
             MaxRewrites = request.MaxRewrites,
             Effort = request.Effort,
+            MaxPages = request.MaxPages,
         };
 
         var result = await tailoringService.TailorAsync(serviceRequest, ct).ConfigureAwait(false);
@@ -154,45 +155,156 @@ public static class TailorEndpoints
         new(StringComparer.OrdinalIgnoreCase) { "of", "and", "for", "&" };
 
     /// <summary>
+    /// Generic fallback used whenever no role title or company name can be extracted from
+    /// the posting's text at all (CONTRACTS.md has no naming convention to defer to here).
+    /// </summary>
+    private const string GenericFallbackName = "Tailored Resume";
+
+    /// <summary>A candidate fallback line is rejected as "prose" past this many words.</summary>
+    private const int MaxFallbackLineWords = 12;
+
+    /// <summary>Labels that introduce a role title on their own line in a well-formed posting.</summary>
+    private static readonly string[] TitleLabels = ["job title", "title", "position", "role"];
+
+    /// <summary>Legal-entity suffixes recognized when extracting a company name as a last resort.</summary>
+    private static readonly HashSet<string> CompanySuffixes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "LLC", "L.L.C.", "Inc", "Inc.", "Incorporated", "Corp", "Corp.", "Corporation",
+        "Ltd", "Ltd.", "Co", "Co.", "LLP", "PLC",
+    };
+
+    /// <summary>
     /// Names a tailored resume from a job posting whose <c>Title</c>/<c>Company</c> could
-    /// not be determined (always the case for a raw-text posting; occasionally the case
-    /// for a URL fetch that didn't yield structured fields). The posting's first non-blank
-    /// line is usually the role title or an opening sentence naming the role. A bare GUID
-    /// must never appear in a user-visible name; beyond that, a full prose sentence
-    /// ("We are hiring a Senior Backend Engineer to join our platform team.") is a poor
-    /// resume name, so a detected role title is preferred where one is available, and
-    /// otherwise the line is trimmed rather than kept whole with trailing punctuation.
+    /// not be determined (always the case for a raw-text posting; occasionally the case for
+    /// a URL fetch that didn't yield structured fields). A bare GUID must never appear in a
+    /// user-visible name, and neither must a truncated fragment of a sentence — a real
+    /// posting whose opening line was corporate boilerplate ("JT4, LLC provides engineering
+    /// and technical support to multiple western test ranges...") used to be blindly
+    /// character-truncated into exactly that kind of fragment. A detected role title is
+    /// preferred wherever the text offers one — a labeled "Title:"/"Position:" line, or a
+    /// lead-in phrase such as "hiring a..." (checked with <see cref="SeniorityClassifier"/>
+    /// help via <see cref="TryExtractTitlePhrase"/>) — searched across every line, not just
+    /// the first. Only when nothing title-like exists anywhere does this fall back to the
+    /// first line itself, and only when that line is short enough to plausibly already be a
+    /// title rather than a chopped sentence; failing that it falls back to a recognized
+    /// company name, and finally to a generic label — never to a truncated prose fragment.
     /// </summary>
     private static string DeriveNameFromRawText(string rawText)
     {
-        foreach (var rawLine in rawText.Split('\n'))
+        var lines = rawText.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        if (lines.Count == 0)
         {
-            var line = rawLine.Trim();
-            if (line.Length == 0)
+            // RawText is required and CreateJob rejects a whitespace-only value, so this is
+            // reachable only for a degenerate posting; still, never fall back to the job id.
+            return GenericFallbackName;
+        }
+
+        foreach (var line in lines)
+        {
+            if (TryExtractLabeledTitle(line, out var labeled))
+            {
+                return Truncate(labeled);
+            }
+        }
+
+        foreach (var line in lines)
+        {
+            if (TryExtractTitlePhrase(line, out var phrased))
+            {
+                return Truncate(phrased);
+            }
+        }
+
+        var first = lines[0];
+        var trimmed = first[^1] is '.' or '!' or '?' ? first[..^1].TrimEnd() : first;
+
+        if (LooksLikeShortLabel(trimmed))
+        {
+            return Truncate(trimmed);
+        }
+
+        // The first line reads as prose, not a title (too long, too many words, or already
+        // cut off with an ellipsis) — never surface a chopped sentence as the resume's name.
+        return TryExtractCompanyName(first, out var company)
+            ? Truncate($"{company} - {GenericFallbackName}")
+            : GenericFallbackName;
+    }
+
+    /// <summary>
+    /// Matches a line of the form <c>"Title: X"</c> (also "Job Title", "Position", "Role"),
+    /// common in structured postings. Trusted without the noun/seniority sanity check
+    /// <see cref="TryExtractTitlePhrase"/> applies, since an explicit label is unambiguous.
+    /// </summary>
+    private static bool TryExtractLabeledTitle(string line, out string title)
+    {
+        var colonIndex = line.IndexOf(':');
+        if (colonIndex > 0)
+        {
+            var label = line[..colonIndex].Trim();
+            var candidate = line[(colonIndex + 1)..].Trim();
+
+            if (candidate.Length > 0 && TitleLabels.Contains(label, StringComparer.OrdinalIgnoreCase))
+            {
+                title = candidate;
+                return true;
+            }
+        }
+
+        title = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// A first-line fallback is only accepted when it plausibly already is a short title —
+    /// long lines, ellipsis-truncated lines (a common upstream scraper artifact), and
+    /// multi-clause prose are always rejected in favor of a safer fallback further down
+    /// <see cref="DeriveNameFromRawText"/>.
+    /// </summary>
+    private static bool LooksLikeShortLabel(string line) =>
+        line.Length > 0 &&
+        line.Length <= MaxDerivedNameLength &&
+        !line.Contains('…', StringComparison.Ordinal) &&
+        line.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= MaxFallbackLineWords;
+
+    /// <summary>
+    /// Looks for a leading proper-noun run ending in a recognized legal-entity suffix (e.g.
+    /// <c>"JT4, LLC"</c>), the most common way a posting's opening sentence names the
+    /// employer even when it never states a role title at all.
+    /// </summary>
+    private static bool TryExtractCompanyName(string line, out string company)
+    {
+        var words = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        for (var take = 1; take <= Math.Min(4, words.Length); take++)
+        {
+            var lastWord = words[take - 1].TrimEnd(',');
+            if (!CompanySuffixes.Contains(lastWord))
             {
                 continue;
             }
 
-            if (TryExtractTitlePhrase(line, out var title))
+            var precedingWordsAreProperNouns = true;
+            for (var i = 0; i < take - 1; i++)
             {
-                return Truncate(title);
+                var word = words[i].TrimEnd(',');
+                if (word.Length == 0 || !char.IsUpper(word[0]))
+                {
+                    precedingWordsAreProperNouns = false;
+                    break;
+                }
             }
 
-            // No detectable title: keep the line as-is when it already reads like one
-            // (short, no terminal sentence punctuation) — this is the common case for a
-            // well-formed posting whose first line already is the role title. Otherwise
-            // trim the trailing sentence punctuation rather than keep a whole sentence
-            // with a period on the end.
-            var trimmed = line.Length > 0 && line[^1] is '.' or '!' or '?'
-                ? line[..^1].TrimEnd()
-                : line;
+            if (!precedingWordsAreProperNouns)
+            {
+                continue;
+            }
 
-            return Truncate(trimmed);
+            company = string.Join(' ', words.Take(take)).TrimEnd(',');
+            return true;
         }
 
-        // RawText is required and CreateJob rejects a whitespace-only value, so this is
-        // reachable only for a degenerate posting; still, never fall back to the job id.
-        return "Tailored Resume";
+        company = string.Empty;
+        return false;
     }
 
     /// <summary>
@@ -267,8 +379,25 @@ public static class TailorEndpoints
         return false;
     }
 
-    private static string Truncate(string name) =>
-        name.Length <= MaxDerivedNameLength
-            ? name
-            : string.Concat(name.AsSpan(0, MaxDerivedNameLength - 1), "…");
+    /// <summary>
+    /// Truncates to <see cref="MaxDerivedNameLength"/> at a word boundary rather than a raw
+    /// character index, so a name that does need shortening is cut between words, never
+    /// mid-word.
+    /// </summary>
+    private static string Truncate(string name)
+    {
+        if (name.Length <= MaxDerivedNameLength)
+        {
+            return name;
+        }
+
+        var cut = name[..(MaxDerivedNameLength - 1)];
+        var lastSpace = cut.LastIndexOf(' ');
+        if (lastSpace > 0)
+        {
+            cut = cut[..lastSpace];
+        }
+
+        return cut.TrimEnd() + "…";
+    }
 }

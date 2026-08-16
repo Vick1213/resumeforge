@@ -414,6 +414,9 @@ public sealed record SetSummaryCommand : TailorCommand
 public sealed record EmphasizeSkillsCommand : TailorCommand
 { public required IReadOnlyList<string> Skills { get; init; } }  // normalized names
 
+// Order's JSON Schema constrains each element to an `enum` of the exact wire values
+// SectionKind serializes to (JsonSchemaRegistry derives this list from the enum itself,
+// never hand-typed, so it cannot drift as members are added).
 public sealed record SetSectionOrderCommand : TailorCommand
 { public required IReadOnlyList<SectionKind> Order { get; init; } }
 
@@ -482,7 +485,7 @@ public sealed record RejectedCommand
 {
     public required TailorCommand Command { get; init; }
     public required string Reason { get; init; }
-    public required string Code { get; init; }   // "unknown-target", "fabricated-metric", ...
+    public required string Code { get; init; }   // "unknown-target", "fabricated-metric", "malformed-command", ...
 }
 ```
 
@@ -517,6 +520,37 @@ Two rules that hold at **every** level, including `Maximum`:
 
 `MaxRewrites` remains individually overridable on the request. When both are supplied the
 explicit value wins, so effort is a preset rather than a lock.
+
+### Page budget
+
+A resume that does not fit on a page nobody will read is not tailored. Relevance ranking
+alone does not bound length: a large knowledge base produces a large resume, because
+every entry that scores above zero is still a candidate for inclusion.
+
+`TailorOptions.MaxPages` (default **2**, `null` disables) bounds the rendered result.
+Enforcement is deterministic and spends **no model tokens** — it runs after commands are
+executed and before the final render:
+
+1. Render the document and count pages.
+2. While the count exceeds the budget, exclude the single lowest-scoring still-included
+   entry and render again.
+3. Stop when it fits, when only the floor remains, or after a bounded number of passes.
+
+Two rules constrain what may be cut:
+
+- **Cut order follows relevance, but section kind breaks ties**: certifications and
+  projects are surrendered before experience. A job seeker's employment history is the
+  substance of a resume; side projects are the padding.
+- **The floor is never crossed**: basics, and the single highest-scoring experience
+  entry, are never excluded to satisfy a budget. If a document cannot fit even at the
+  floor, it is rendered over budget rather than mutilated, and the result says so.
+
+Every entry dropped this way is reported as a `ResumeDiffEntry` with `Kind = Excluded`
+and a `Rationale` naming the budget, so a cut is never silent — the user can see exactly
+what length cost them and raise `MaxPages` if they disagree.
+
+`TailoringResult` carries the final `PageCount`, and `FitsBudget` is false when the floor
+was reached before the budget was met.
 
 Estimated token cost per level must be shown in the UI beside the control. A user
 choosing to spend more is entitled to know roughly what they are buying before they
@@ -801,6 +835,7 @@ public sealed record TailorRequest
     public string? BaseResumeId { get; init; }     // null → current base resume
     public ModelEffort Effort { get; init; } = ModelEffort.Standard;
     public int? MaxRewrites { get; init; }         // null → derived from Effort; set wins
+    public int? MaxPages { get; init; } = 2;       // null → unbounded; see Page budget
     public bool DryRun { get; init; }              // validate + trace, don't persist
 }
 ```

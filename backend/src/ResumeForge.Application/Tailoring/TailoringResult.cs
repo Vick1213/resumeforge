@@ -24,4 +24,17 @@ public sealed record TailoringResult
 
     /// <summary>The graph execution trace, for the live pipeline view.</summary>
     public required IReadOnlyList<GraphNodeTrace> Trace { get; init; }
+
+    /// <summary>
+    /// The final rendered page count of <see cref="Document"/>, after page-budget
+    /// enforcement (CONTRACTS.md §6 "Page budget").
+    /// </summary>
+    public required int PageCount { get; init; }
+
+    /// <summary>
+    /// True when <see cref="Document"/> fits <see cref="TailorOptions.MaxPages"/> (or the
+    /// budget was disabled). False when the floor — basics and the single highest-scoring
+    /// experience entry — was reached before the page count came within budget.
+    /// </summary>
+    public required bool FitsBudget { get; init; }
 }

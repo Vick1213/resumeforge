@@ -10,9 +10,10 @@ namespace ResumeForge.Application.Tests.Tailoring;
 
 /// <summary>
 /// Structural tests for <see cref="TailoringGraphFactory"/>: the declared node set and
-/// dependency edges must match CONTRACTS.md §7 exactly, so the executor can run the
-/// three <c>score-*</c> nodes — and the three <c>verify-*</c>/<c>execute-commands</c>
-/// nodes — concurrently.
+/// dependency edges must match CONTRACTS.md §7's diagram, plus the <c>enforce-page-budget</c>
+/// node CONTRACTS.md §6 ("Page budget") adds between <c>execute-commands</c> and
+/// <c>render</c> — so the executor can run the three <c>score-*</c> nodes — and the three
+/// <c>verify-*</c>/<c>execute-commands</c> nodes — concurrently.
 /// </summary>
 public sealed class TailoringGraphFactoryTests
 {
@@ -31,6 +32,7 @@ public sealed class TailoringGraphFactoryTests
             Substitute.For<ICommandExecutor>(),
             Substitute.For<ICoverageAnalyzer>(),
             Substitute.For<IResumeRenderer>(),
+            Substitute.For<IPageBudgetEnforcer>(),
             new TailorOptions());
 
         return factory.Create(new TailoringRequest { JobId = "job-1" });
@@ -40,7 +42,7 @@ public sealed class TailoringGraphFactoryTests
         graph.Nodes.Single(n => n.Name == name).DependsOn;
 
     [Fact]
-    public void Graph_declares_exactly_the_fourteen_documented_nodes()
+    public void Graph_declares_exactly_the_fifteen_documented_nodes()
     {
         var graph = BuildGraph();
 
@@ -49,7 +51,8 @@ public sealed class TailoringGraphFactoryTests
             "fetch-jd", "load-kb", "analyze-jd", "build-base",
             "score-experience", "score-projects", "score-skills",
             "build-brief", "propose-commands", "validate-commands",
-            "verify-fabrication", "verify-coverage", "execute-commands", "render",
+            "verify-fabrication", "verify-coverage", "execute-commands",
+            "enforce-page-budget", "render",
         ],
             ignoreOrder: true);
     }
@@ -95,11 +98,20 @@ public sealed class TailoringGraphFactoryTests
     }
 
     [Fact]
-    public void Render_depends_on_all_three_downstream_verification_and_execution_nodes()
+    public void Render_depends_on_both_verification_nodes_and_the_page_budget_node()
     {
         var graph = BuildGraph();
 
-        DependsOn(graph, "render").ShouldBe(["verify-fabrication", "verify-coverage", "execute-commands"], ignoreOrder: true);
+        DependsOn(graph, "render").ShouldBe(["verify-fabrication", "verify-coverage", "enforce-page-budget"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public void Enforce_page_budget_depends_on_execute_commands_and_the_three_score_nodes()
+    {
+        var graph = BuildGraph();
+
+        DependsOn(graph, "enforce-page-budget").ShouldBe(
+            ["execute-commands", "score-experience", "score-projects", "score-skills"], ignoreOrder: true);
     }
 
     [Fact]

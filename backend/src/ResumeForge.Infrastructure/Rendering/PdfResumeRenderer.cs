@@ -27,22 +27,38 @@ public sealed class PdfResumeRenderer
         QuestPDF.Settings.License = LicenseType.Community;
     }
 
-    /// <summary>Renders <paramref name="doc"/> to PDF bytes.</summary>
-    public byte[] Render(ResumeDocument doc)
+    /// <summary>
+    /// The raster DPI used purely to count pages (via QuestPDF's per-page image
+    /// generation). Deliberately low, since only the number of images is read, never their
+    /// pixels.
+    /// </summary>
+    private const int PageCountRasterDpi = 72;
+
+    /// <summary>Renders <paramref name="doc"/> to PDF, alongside the resulting page count.</summary>
+    public PdfRenderResult Render(ResumeDocument doc)
     {
         ArgumentNullException.ThrowIfNull(doc);
 
-        var document = Document.Create(container =>
+        var document = BuildDocument(doc);
+        var content = document.GeneratePdf();
+        var pageCount = document.GenerateImages(new ImageGenerationSettings { RasterDpi = PageCountRasterDpi }).Count();
+
+        return new PdfRenderResult { Content = content, PageCount = pageCount };
+    }
+
+    private static IDocument BuildDocument(ResumeDocument doc)
+    {
+        return Document.Create(container =>
         {
             container.Page(page =>
             {
                 page.Size(PageSizes.Letter);
-                page.Margin(0.55f, Unit.Inch);
-                page.DefaultTextStyle(x => x.FontSize(10).FontColor(InkColor));
+                page.Margin(0.25f, Unit.Inch);
+                page.DefaultTextStyle(x => x.FontSize(9f).FontColor(InkColor).LineHeight(1.0f));
 
                 page.Content().Column(column =>
                 {
-                    column.Spacing(10);
+                    column.Spacing(2f);
 
                     ComposeHeader(column, doc.Basics);
 
@@ -73,23 +89,21 @@ public sealed class PdfResumeRenderer
                 });
             });
         });
-
-        return document.GeneratePdf();
     }
 
     private static void ComposeHeader(ColumnDescriptor column, ResumeBasics basics)
     {
-        column.Item().Text(basics.FullName).FontSize(22).Bold().FontColor(InkColor);
+        column.Item().Text(basics.FullName).FontSize(17f).Bold().FontColor(InkColor);
 
         if (!string.IsNullOrWhiteSpace(basics.Headline))
         {
-            column.Item().Text(basics.Headline).FontSize(12).SemiBold().FontColor(AccentColor);
+            column.Item().Text(basics.Headline).FontSize(10f).SemiBold().FontColor(AccentColor);
         }
 
         var contact = string.Join("   ·   ", ContactParts(basics));
         if (contact.Length > 0)
         {
-            column.Item().Text(contact).FontSize(9.5f).FontColor(MutedColor);
+            column.Item().Text(contact).FontSize(8f).FontColor(MutedColor);
         }
     }
 
@@ -99,15 +113,41 @@ public sealed class PdfResumeRenderer
         {
             if (!string.IsNullOrWhiteSpace(value))
             {
-                yield return value;
+                yield return ForDisplay(value);
             }
         }
     }
 
+    /// <summary>
+    /// Strips the scheme and any trailing slash from a URL for the contact line. Printed in
+    /// full, three URLs wrap onto a second line and strand a fragment of the last one; nobody
+    /// types a scheme off a resume anyway, so it is noise that costs a line.
+    /// </summary>
+    private static string ForDisplay(string value)
+    {
+        var trimmed = value.Trim();
+
+        foreach (var scheme in new[] { "https://", "http://" })
+        {
+            if (trimmed.StartsWith(scheme, StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = trimmed[scheme.Length..];
+                break;
+            }
+        }
+
+        if (trimmed.StartsWith("www.", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[4..];
+        }
+
+        return trimmed.TrimEnd('/');
+    }
+
     private static void ComposeSectionHeading(ColumnDescriptor column, string title)
     {
-        column.Item().PaddingTop(4).Text(title.ToUpperInvariant()).FontSize(10).Bold().FontColor(AccentColor);
-        column.Item().PaddingBottom(2).LineHorizontal(1).LineColor(RuleColor);
+        column.Item().PaddingTop(1).Text(title.ToUpperInvariant()).FontSize(9f).Bold().FontColor(AccentColor);
+        column.Item().PaddingBottom(0.5f).LineHorizontal(0.5f).LineColor(RuleColor);
     }
 
     private static void ComposeSummary(ColumnDescriptor column, string? summary)
@@ -165,16 +205,20 @@ public sealed class PdfResumeRenderer
         {
             column.Item().Column(entryColumn =>
             {
+                var titleSuffix = string.IsNullOrWhiteSpace(entry.Location) ? string.Empty : $" · {entry.Location}";
+
                 entryColumn.Item().Row(row =>
                 {
-                    row.RelativeItem().Text($"{entry.Role} — {entry.Organization}").Bold();
+                    row.RelativeItem().Text(text =>
+                    {
+                        text.Span($"{entry.Role} — {entry.Organization}").Bold();
+                        if (titleSuffix.Length > 0)
+                        {
+                            text.Span(titleSuffix).FontColor(MutedColor);
+                        }
+                    });
                     row.ConstantItem(140).AlignRight().Text(DateRangeFormatter.Format(entry.StartDate, entry.EndDate)).FontColor(MutedColor);
                 });
-
-                if (!string.IsNullOrWhiteSpace(entry.Location))
-                {
-                    entryColumn.Item().Text(entry.Location).FontSize(9).FontColor(MutedColor);
-                }
 
                 ComposeBullets(entryColumn, entry.Bullets.Select(b => b.Text));
             });
@@ -302,4 +346,14 @@ public sealed class PdfResumeRenderer
 
         return end is { } e ? e.ToString("MMM yyyy", CultureInfo.InvariantCulture) : null;
     }
+}
+
+/// <summary>The result of <see cref="PdfResumeRenderer.Render"/>: the PDF bytes and the page count QuestPDF laid them out into.</summary>
+public sealed record PdfRenderResult
+{
+    /// <summary>The rendered PDF bytes.</summary>
+    public required byte[] Content { get; init; }
+
+    /// <summary>The number of pages QuestPDF laid the document out into.</summary>
+    public required int PageCount { get; init; }
 }

@@ -147,14 +147,16 @@ public sealed class HtmlResumeRenderer
         foreach (var entry in included)
         {
             sb.Append("<article class=\"entry\">\n<div class=\"entry-head\"><h3>")
-              .Append(Enc(entry.Role)).Append(" <span class=\"org\">— ").Append(Enc(entry.Organization)).Append("</span></h3>");
-            sb.Append("<span class=\"dates\">").Append(Enc(DateRangeFormatter.Format(entry.StartDate, entry.EndDate))).Append("</span>");
-            sb.Append("</div>\n");
+              .Append(Enc(entry.Role)).Append(" <span class=\"org\">— ").Append(Enc(entry.Organization)).Append("</span>");
 
             if (!string.IsNullOrWhiteSpace(entry.Location))
             {
-                sb.Append("<p class=\"location\">").Append(Enc(entry.Location)).Append("</p>\n");
+                sb.Append(" <span class=\"loc\">· ").Append(Enc(entry.Location)).Append("</span>");
             }
+
+            sb.Append("</h3>");
+            sb.Append("<span class=\"dates\">").Append(Enc(DateRangeFormatter.Format(entry.StartDate, entry.EndDate))).Append("</span>");
+            sb.Append("</div>\n");
 
             AppendBullets(sb, entry.Bullets.Select(b => b.Text));
             sb.Append("</article>\n");
@@ -332,44 +334,45 @@ public sealed class HtmlResumeRenderer
           line-height: 1.45;
           font-size: 14px;
         }
-        .resume { max-width: 780px; margin: 0 auto; padding: 48px 56px 64px; }
-        .header { margin-bottom: 20px; }
-        .header h1 { margin: 0 0 2px; font-size: 26px; letter-spacing: 0.2px; }
-        .headline { margin: 0 0 8px; color: var(--accent); font-weight: 600; font-size: 14.5px; }
-        .contact { margin: 0; color: var(--muted); font-size: 12.5px; }
+        .resume { max-width: 780px; margin: 0 auto; padding: 24px 32px 36px; }
+        .header { margin-bottom: 6px; }
+        .header h1 { margin: 0 0 1px; font-size: 19px; letter-spacing: 0.2px; }
+        .headline { margin: 0 0 2px; color: var(--accent); font-weight: 600; font-size: 11px; }
+        .contact { margin: 0; color: var(--muted); font-size: 9px; }
         .contact a { color: var(--muted); text-decoration: none; }
         .contact a:hover { text-decoration: underline; }
         .sep { color: var(--rule); }
-        .section { margin-top: 22px; }
+        .section { margin-top: 7px; }
         .section h2 {
-          font-size: 12px;
+          font-size: 10px;
           text-transform: uppercase;
           letter-spacing: 1.2px;
           color: var(--accent);
           border-bottom: 1.5px solid var(--rule);
-          padding-bottom: 4px;
-          margin: 0 0 10px;
+          padding-bottom: 1px;
+          margin: 0 0 3px;
         }
         .summary { margin: 0; color: var(--ink); }
         .skills { margin: 0; }
-        .skill-row { display: flex; gap: 8px; padding: 2px 0; }
+        .skill-row { display: flex; gap: 8px; padding: 0.5px 0; }
         .skill-row dt { flex: 0 0 150px; font-weight: 600; color: var(--ink); }
         .skill-row dd { margin: 0; color: var(--ink); }
-        .entry { margin-bottom: 14px; page-break-inside: avoid; }
+        .entry { margin-bottom: 3px; page-break-inside: avoid; }
         .entry:last-child { margin-bottom: 0; }
         .entry-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-        .entry-head h3 { margin: 0; font-size: 14.5px; font-weight: 700; }
+        .entry-head h3 { margin: 0; font-size: 10.5px; font-weight: 700; }
         .entry-head .org { font-weight: 500; color: var(--ink); }
-        .dates { flex: 0 0 auto; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
-        .location, .tagline, .links { margin: 2px 0 4px; color: var(--muted); font-size: 12.5px; }
+        .entry-head .loc { font-weight: 400; color: var(--muted); }
+        .dates { flex: 0 0 auto; color: var(--muted); font-size: 9px; white-space: nowrap; }
+        .location, .tagline, .links { margin: 0.5px 0 1px; color: var(--muted); font-size: 9px; }
         .links a { color: var(--muted); }
-        .bullets { margin: 4px 0 0; padding-left: 18px; }
-        .bullets li { margin: 2px 0; }
-        .certs { margin: 0; padding-left: 18px; }
-        .certs li { margin: 3px 0; }
+        .bullets { margin: 1px 0 0; padding-left: 16px; }
+        .bullets li { margin: 0.5px 0; }
+        .certs { margin: 0; padding-left: 16px; }
+        .certs li { margin: 1px 0; }
         @media print {
-          @page { size: Letter; margin: 0.55in; }
-          body { font-size: 12.5px; }
+          @page { size: Letter; margin: 0.25in; }
+          body { font-size: 9px; line-height: 1.05; }
           .resume { max-width: none; padding: 0; margin: 0; }
           a { color: inherit; }
         }

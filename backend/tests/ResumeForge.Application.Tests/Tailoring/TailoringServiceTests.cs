@@ -21,6 +21,7 @@ public sealed class TailoringServiceTests
     {
         var document = TestData.Document();
         var executed = new CommandExecutionResult { Document = document, Diff = [] };
+        var budgeted = new PageBudgetResult { Document = document, Diff = [], PageCount = 1, FitsBudget = true };
         var validation = new CommandValidationResult { Accepted = [], Rejected = [] };
         var coverage = new CoverageReport { Score = 0.75, Requirements = [] };
 
@@ -34,6 +35,7 @@ public sealed class TailoringServiceTests
             Outputs = new Dictionary<string, object?>
             {
                 [TailoringGraphFactory.ExecuteCommands] = executed,
+                [TailoringGraphFactory.EnforcePageBudget] = budgeted,
                 [TailoringGraphFactory.ValidateCommands] = validation,
                 [TailoringGraphFactory.VerifyCoverage] = coverage,
             },
@@ -55,10 +57,12 @@ public sealed class TailoringServiceTests
         result.Commands.ShouldBe(validation);
         result.Usage.ShouldBe(usage);
         result.Trace.ShouldBe(trace);
+        result.PageCount.ShouldBe(1);
+        result.FitsBudget.ShouldBeTrue();
     }
 
     [Fact]
-    public async Task TailorAsync_throws_when_execute_commands_output_is_missing()
+    public async Task TailorAsync_throws_when_enforce_page_budget_output_is_missing()
     {
         var runResult = new GraphRunResult
         {
@@ -85,6 +89,7 @@ public sealed class TailoringServiceTests
     {
         var document = TestData.Document();
         var executed = new CommandExecutionResult { Document = document, Diff = [] };
+        var budgeted = new PageBudgetResult { Document = document, Diff = [], PageCount = 1, FitsBudget = true };
         var validation = new CommandValidationResult { Accepted = [], Rejected = [] };
 
         var runResult = new GraphRunResult
@@ -94,6 +99,7 @@ public sealed class TailoringServiceTests
             Outputs = new Dictionary<string, object?>
             {
                 [TailoringGraphFactory.ExecuteCommands] = executed,
+                [TailoringGraphFactory.EnforcePageBudget] = budgeted,
                 [TailoringGraphFactory.ValidateCommands] = validation,
             },
             Usage = TokenUsage.Empty,

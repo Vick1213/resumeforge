@@ -26,6 +26,12 @@ public sealed record TailorRequest
     /// </summary>
     public int? MaxRewrites { get; init; }
 
+    /// <summary>
+    /// Bounds the rendered result to this many pages (CONTRACTS.md §6 "Page budget").
+    /// Defaults to <c>2</c>; an explicit <c>null</c> disables page-budget trimming entirely.
+    /// </summary>
+    public int? MaxPages { get; init; } = 2;
+
     /// <summary>When true, runs the pipeline and returns its trace without persisting anything.</summary>
     public bool DryRun { get; init; }
 }

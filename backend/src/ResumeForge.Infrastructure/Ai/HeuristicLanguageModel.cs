@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using ResumeForge.Application.Abstractions;
 using ResumeForge.Application.Tailoring;
@@ -62,6 +63,7 @@ public sealed class HeuristicLanguageModel(TailorOptions tailorOptions, IKnowled
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
     /// <inheritdoc />

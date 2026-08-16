@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using ResumeForge.Application.Abstractions;
 using ResumeForge.Infrastructure.Persistence;
@@ -19,6 +20,7 @@ public sealed class CachingLanguageModel(ILanguageModel inner, ResumeForgeDbCont
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
     /// <inheritdoc />

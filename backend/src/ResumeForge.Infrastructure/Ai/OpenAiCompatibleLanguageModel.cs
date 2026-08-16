@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using ResumeForge.Application.Abstractions;
 
@@ -38,6 +39,7 @@ public sealed class OpenAiCompatibleLanguageModel(
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
     /// <inheritdoc />
@@ -92,7 +94,8 @@ public sealed class OpenAiCompatibleLanguageModel(
 
             try
             {
-                var value = JsonSerializer.Deserialize<T>(result.ResultJson, SerializerOptions)
+                var payloadJson = UnwrapPayload(result.ResultJson, request.SchemaName, schemaRegistry);
+                var value = JsonSerializer.Deserialize<T>(payloadJson, SerializerOptions)
                     ?? throw new JsonException("Model response deserialized to null.");
 
                 return new ModelResponse<T> { Value = value, Usage = totalUsage, FromCache = false };
@@ -107,6 +110,24 @@ public sealed class OpenAiCompatibleLanguageModel(
 
                 if (attempt >= MaxAttempts)
                 {
+                    // Well-formed-but-non-conforming JSON, twice in a row, is a strategy
+                    // problem, not a one-off hiccup: a forced tool call the provider half-
+                    // supports (e.g. ignoring part of the schema) is likelier to be
+                    // constrained correctly by json_schema, and json_schema likelier still by
+                    // prompted JSON. Fall through exactly as a protocol-level rejection would,
+                    // unless the strategy was explicitly pinned — then this must still throw.
+                    if (pinned is null && Next(strategy) is { } next)
+                    {
+                        logger.LogInformation(
+                            "Provider '{Provider}' returned well-formed-but-non-conforming JSON for schema '{SchemaName}' on " +
+                            "structured-output strategy {Strategy} after {MaxAttempts} attempt(s), falling back to {Next}.",
+                            options.Provider, request.SchemaName, strategy, MaxAttempts, next);
+                        strategy = next;
+                        validationError = null;
+                        attempt = 0;
+                        continue;
+                    }
+
                     throw new InvalidOperationException(
                         $"Model response for schema '{request.SchemaName}' failed schema validation after {MaxAttempts} attempt(s).", lastFailure);
                 }
@@ -130,6 +151,29 @@ public sealed class OpenAiCompatibleLanguageModel(
         StructuredOutputStrategy.JsonSchema => StructuredOutputStrategy.PromptedJson,
         _ => null,
     };
+
+    /// <summary>
+    /// Unwraps <paramref name="resultJson"/>'s schema-declared payload property (see
+    /// <see cref="JsonSchemaRegistry.GetPayloadPropertyName"/>) before the caller deserializes
+    /// into its requested <c>T</c>. Every structured-output strategy — forced tool call,
+    /// <c>json_schema</c>, and prompted JSON alike — sends the model the same object-wrapped
+    /// schema, so all three need this same unwrap. A response that isn't the expected object
+    /// shape is surfaced as a <see cref="JsonException"/>, exactly like any other schema-
+    /// validation failure, so it flows through the same retry/fallback machinery.
+    /// </summary>
+    private static string UnwrapPayload(string resultJson, string schemaName, JsonSchemaRegistry schemaRegistry)
+    {
+        var payloadProperty = schemaRegistry.GetPayloadPropertyName(schemaName);
+
+        using var doc = JsonDocument.Parse(resultJson);
+        if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty(payloadProperty, out var payload))
+        {
+            throw new JsonException(
+                $"Model response for schema '{schemaName}' was not an object carrying a '{payloadProperty}' property.");
+        }
+
+        return payload.GetRawText();
+    }
 
     private static async Task<OpenAiChatResult> SendAsync(
         HttpClient client, string? apiKey, string model, StructuredOutputStrategy strategy,

@@ -16,6 +16,9 @@ namespace ResumeForge.Infrastructure.Tests.DependencyInjection;
 /// implementation, and that the language model selection picks the heuristic model when no
 /// API key is configured.
 /// </summary>
+// See EnvironmentVariableCollection: this class sets ANTHROPIC_API_KEY process-wide, so it
+// must not run beside anything else that reads it.
+[Collection(EnvironmentVariableCollection.Name)]
 public sealed class ServiceCollectionExtensionsTests
 {
     private static ServiceProvider BuildProvider(Action<Dictionary<string, string?>>? configure = null)
