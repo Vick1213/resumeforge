@@ -41,7 +41,12 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<ICoverageAnalyzer, CoverageAnalyzer>();
         services.TryAddSingleton<IResumeBuilder, ResumeBuilder>();
         services.TryAddSingleton<IBriefBuilder, BriefBuilder>();
-        services.TryAddSingleton<ITailoringGraphFactory, TailoringGraphFactory>();
+        // Scoped, not Singleton: the constructor depends on several Scoped Infrastructure
+        // services (IJobRepository, IKnowledgeBaseReader, ILanguageModel, ...), and a
+        // Singleton may not capture a Scoped dependency under ASP.NET Core's
+        // captive-dependency validation (on by default in Development, including under
+        // WebApplicationFactory in tests).
+        services.TryAddScoped<ITailoringGraphFactory, TailoringGraphFactory>();
         services.TryAddScoped<ITailoringService, TailoringService>();
 
         return services;
