@@ -619,36 +619,82 @@ public sealed record ModelResponse<T>
 }
 ```
 
+### Swappable cores
+
+The port has exactly **three** implementations, chosen at composition time. Two of them
+are real network clients split by *wire format*, not by vendor — that split is the whole
+design, because most hosted and local providers speak OpenAI's chat-completions format,
+so one client serves them all.
+
+```
+ResumeForge:Ai:Provider = auto | deepseek | anthropic | lmstudio | openai | heuristic
+```
+
+Each named value is a **preset** supplying defaults for `BaseUrl`, `Model`, and which
+environment variable holds the key. Every preset field stays individually overridable
+under `ResumeForge:Ai:*`, so an unlisted provider (Together, Groq, Ollama, vLLM,
+OpenRouter) needs config only — never a code change. Do not hardcode a host.
+
+| Preset | Wire | BaseUrl default | Model default | Key |
+| --- | --- | --- | --- | --- |
+| `deepseek` | OpenAI | `https://api.deepseek.com` | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| `openai` | OpenAI | `https://api.openai.com/v1` | `gpt-4o` | `OPENAI_API_KEY` |
+| `lmstudio` | OpenAI | `http://localhost:1234/v1` | *(server's loaded model)* | none |
+| `anthropic` | Anthropic | `https://api.anthropic.com` | `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
+| `heuristic` | none | — | — | none |
+
+`auto` is the default and resolves in this order: `DEEPSEEK_API_KEY` set → `deepseek`;
+else `ANTHROPIC_API_KEY` set → `anthropic`; else `heuristic`. **`auto` never selects
+`lmstudio`** — that requires a server the user has deliberately started, and probing the
+network during DI registration is not acceptable. Selecting `lmstudio` is explicit.
+
 Implementations in `ResumeForge.Infrastructure.Ai`:
-- `DeepSeekLanguageModel` — the real client. Base URL from `ResumeForge:Ai:BaseUrl`
-  (default `https://api.deepseek.com`), model id from `ResumeForge:Ai:Model` (default
-  `deepseek-chat`), API key from `DEEPSEEK_API_KEY` or `ResumeForge:Ai:ApiKey`. Auth is
-  `Authorization: Bearer <key>`; the endpoint is `POST /chat/completions`.
 
-  Structured output is forced with OpenAI-style function calling: declare one function
-  named `emit_result` whose `parameters` is the JSON Schema named by
-  `ModelRequest.SchemaName`, and pin `tool_choice` to it so the reply is nothing but the
-  validated argument object. If the response carries no tool call — which
-  `deepseek-reasoner` can do, since it does not support forced function calls — fall
-  back to re-requesting with `response_format: { "type": "json_object" }` and parsing the
-  message content. Retry once on a schema mismatch, feeding the validation error back.
+- `OpenAiCompatibleLanguageModel` — serves the `deepseek`, `openai`, and `lmstudio`
+  presets and any other OpenAI-format endpoint. Auth is `Authorization: Bearer <key>`,
+  omitted entirely when no key is configured (LM Studio accepts none); the endpoint is
+  `POST {BaseUrl}/chat/completions`.
 
-  Token usage maps from `usage.prompt_tokens` and `usage.completion_tokens`. DeepSeek
-  also reports `usage.prompt_cache_hit_tokens` from its own server-side context cache;
-  map that onto `TokenUsage.CacheHits` so the UI's cost readout reflects real savings
+  Structured output degrades through three strategies, in order, controlled by
+  `ResumeForge:Ai:StructuredOutput` (`auto` by default):
+
+  1. **Forced tool call** — declare one function named `emit_result` whose `parameters`
+     is the JSON Schema named by `ModelRequest.SchemaName`, and pin `tool_choice` to it
+     so the reply is nothing but the validated argument object.
+  2. **JSON schema response format** — `response_format: { "type": "json_schema", ... }`,
+     carrying the same schema. This is the path for local servers such as LM Studio,
+     whose structured-output support is reliable while forced `tool_choice` is not.
+  3. **Prompted JSON** — `response_format: { "type": "json_object" }` with the schema
+     inlined into the system prompt, then parse the message content.
+
+  A provider that rejects a strategy (HTTP 400, or a 200 carrying no tool call — which
+  `deepseek-reasoner` does, since it does not support forced function calls) falls to the
+  next strategy and **remembers the working strategy for the process lifetime**, so the
+  cost is one probe, not one per request. Retry once on a schema mismatch, feeding the
+  validation error back.
+
+  Token usage maps from `usage.prompt_tokens` and `usage.completion_tokens`. When the
+  provider reports a server-side context-cache hit — DeepSeek's
+  `usage.prompt_cache_hit_tokens`, OpenAI's `usage.prompt_tokens_details.cached_tokens` —
+  map it onto `TokenUsage.CacheHits` so the UI's cost readout reflects real savings
   rather than only the local `CachingLanguageModel` hits.
 
-  Because DeepSeek speaks the OpenAI chat-completions wire format, `BaseUrl` being
-  configurable means this one class also targets OpenAI, Together, Groq, or a local
-  Ollama endpoint without a code change. That is a property worth keeping, not an
-  accident — do not hardcode the host.
-- `HeuristicLanguageModel` — **no network**, used when no API key is present and in all
-  tests. Produces valid commands by pure ranking rules (include top-scored entries,
-  select best-matching variants, order by relevance, no rewrites). The whole product must
-  work end to end with this implementation; the repo must be runnable by a stranger with
-  no API key. Registration picks it automatically when `DEEPSEEK_API_KEY` is unset.
-- `CachingLanguageModel` — decorator, SHA-256 of `(ModelId, System, User, SchemaName)`,
-  backed by the database.
+- `AnthropicLanguageModel` — serves the `anthropic` preset. Anthropic Messages API
+  (`POST /v1/messages`), `x-api-key` + `anthropic-version` headers, structured output
+  forced via `tool_choice` on a single `emit_result` tool. Usage maps from
+  `usage.input_tokens` / `usage.output_tokens`, with `cache_read_input_tokens` onto
+  `TokenUsage.CacheHits`.
+
+- `HeuristicLanguageModel` — **no network**, used by `auto` when no key is present, and
+  in all tests. Produces valid commands by pure ranking rules (include top-scored
+  entries, select best-matching variants, order by relevance, no rewrites). The whole
+  product must work end to end with this implementation; the repo must be runnable by a
+  stranger with no API key and no local server.
+
+- `CachingLanguageModel` — decorator wrapping whichever core is selected. SHA-256 of
+  `(ModelId, System, User, SchemaName)`, backed by the database. `ModelId` must carry the
+  resolved provider **and** model (e.g. `lmstudio/qwen3-8b`), so switching cores can
+  never serve a cached response generated by a different model.
 
 ---
 
@@ -677,7 +723,7 @@ Scalar UI at `/docs`. All errors use RFC 9457 `ProblemDetails`.
 | `GET` | `/api/autofill/profile` | → `AutofillProfile` (used by the extension) |
 | `POST` | `/api/autofill/resolve` | `ResolveFieldsRequest` → `ResolveFieldsResponse` |
 | `POST` | `/api/autofill/fieldmap` | `LearnedFieldMap` → 204 (persist a learned map) |
-| `GET` | `/api/autofill/fieldmap/{host}` | → `LearnedFieldMap?` |
+| `GET` | `/api/autofill/fieldmap/{host}?formSignature=` | → `LearnedFieldMap?` |
 | `GET` | `/api/applications` | → `ApplicationDto[]` |
 | `POST` | `/api/applications` | `CreateApplicationRequest` → `ApplicationDto` |
 | `PATCH`| `/api/applications/{id}` | `UpdateApplicationRequest` → `ApplicationDto` |
@@ -697,6 +743,33 @@ public sealed record TailorRequest
 CORS: allow `http://localhost:5173` (Vite dev) and `chrome-extension://*` for the
 autofill endpoints.
 
+### Response semantics
+
+A response type written with a `?` (only `LearnedFieldMap?`) means **200 with a JSON
+`null` body** on a miss — it is a cache probe, and absence is a normal answer. Every
+other lookup returns **404** when the entity does not exist. Note that both
+`TypedResults.Ok<T>(null)` and `TypedResults.Json<T>(null)` emit an *empty* body rather
+than the four bytes `null`, so that one endpoint must write the literal itself.
+
+`POST /api/tailor` persists the tailored document as a **new** resume: the executor
+preserves the source document's `Id` and `Name`, so saving the result unmodified would
+overwrite the base resume in place. The endpoint assigns a fresh id and a name derived
+from the job's company and title, returns that document, and carries the run id in a
+`Location: /api/tailor/{runId}/trace` header — `TailoringResult` itself has no run id
+field.
+
+`ApplicationStatus` is the closed set below, serialized in exactly this lowercase form.
+The frontend's Applications board is keyed on these values; a rename silently empties a
+column rather than erroring.
+
+```
+saved | applied | screening | interview | offer | rejected | withdrawn
+```
+
+`screening` and `interview` are deliberately distinct — a phone screen and an onsite
+loop are different states to a job seeker, and collapsing them loses information the
+board exists to show. `withdrawn` is distinct from `rejected`: who ended it matters.
+
 ---
 
 ## 10. Autofill contracts
@@ -715,9 +788,19 @@ public sealed record AutofillDocument
 {
     public required string Kind { get; init; }     // "resume" | "coverLetter"
     public required string FileName { get; init; }
-    public required string DownloadUrl { get; init; }
+    public required string DownloadUrl { get; init; }   // ABSOLUTE — see below
 }
 ```
+
+`DownloadUrl` is **absolute**, carrying scheme and authority
+(`http://localhost:5217/api/render/resume-base?format=pdf`), never a site-relative path.
+The consumer is the extension's background service worker, whose origin is
+`chrome-extension://<id>`: a relative URL resolves against the *extension* origin and
+fails silently, taking file-upload autofill down with no visible error. The API builds
+this from the incoming request's scheme and host rather than a hardcoded value, so it
+stays correct behind a proxy or on a different port. Extension-side, treat a relative
+value defensively by resolving it against the configured `backendBaseUrl` — the contract
+says absolute, but a silent no-op is too expensive a failure to leave undefended.
 
 **Canonical field keys** (closed set — the extension and backend must agree exactly):
 

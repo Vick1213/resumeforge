@@ -23,9 +23,12 @@ cd frontend && npm install && npm run dev
 cd extension && npm install && npm run build
 ```
 
-No API key is required. Without `ANTHROPIC_API_KEY` set, the backend registers
-`HeuristicLanguageModel` automatically and the whole tailoring pipeline runs end to end
-against the sample data in `profile/`.
+No API key is required. `ResumeForge:Ai:Provider` defaults to `auto`, which registers
+`HeuristicLanguageModel` when neither `DEEPSEEK_API_KEY` nor `ANTHROPIC_API_KEY` is set,
+and the whole tailoring pipeline runs end to end against the sample data in `profile/`. To
+develop against a real model instead, set `DEEPSEEK_API_KEY` or `ANTHROPIC_API_KEY`, or
+point `ResumeForge:Ai:Provider` at `openai` or a local [LM Studio](https://lmstudio.ai)
+server (`lmstudio`) — see the README's Quick start section for the full provider table.
 
 ## Running tests
 

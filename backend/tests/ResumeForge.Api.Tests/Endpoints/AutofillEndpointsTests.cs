@@ -54,24 +54,50 @@ public sealed class AutofillEndpointsTests(ResumeForgeApiFactory factory)
     }
 
     [Fact]
-    public async Task Resolve_with_an_unresolved_field_returns_501_under_the_heuristic_model()
+    public async Task Resolve_with_an_unresolved_field_works_under_the_heuristic_model_with_no_api_key()
     {
-        // HeuristicLanguageModel (the model in effect whenever no API key is configured,
-        // per CONTRACTS.md §8) only ever proposes tailoring commands; it has no support for
-        // the "field-resolutions" schema this route needs. See the implementation report.
+        // HeuristicLanguageModel (the model in effect whenever no API key is configured for
+        // any provider, per CONTRACTS.md §8) resolves "field-resolutions" with no network
+        // call, so this route works end to end for a stranger with no API key.
         using var client = factory.CreateClient();
 
         var request = new ResolveFieldsRequest
         {
             Host = "boards.greenhouse.io",
             FormSignature = "sig-nonempty",
-            Fields = [new UnresolvedField { ElementId = "el-1", Label = "Email", InputType = "email" }],
+            Fields = [new UnresolvedField { ElementId = "el-1", Label = "Email Address", InputType = "email" }],
         };
 
         using var response = await client.PostAsJsonAsync("/api/autofill/resolve", request, TestJson.Options);
 
-        response.StatusCode.ShouldBe(HttpStatusCode.NotImplemented);
-        response.Content.Headers.ContentType?.MediaType.ShouldBe("application/problem+json");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<ResolveFieldsResponse>(TestJson.Options);
+        body.ShouldNotBeNull();
+
+        var resolution = body.Resolutions.ShouldHaveSingleItem();
+        resolution.ElementId.ShouldBe("el-1");
+        resolution.CanonicalKey.ShouldBe("email");
+        resolution.Confidence.ShouldBeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task Resolve_emits_an_empty_canonical_key_for_a_field_it_cannot_map()
+    {
+        using var client = factory.CreateClient();
+
+        var request = new ResolveFieldsRequest
+        {
+            Host = "boards.greenhouse.io",
+            FormSignature = "sig-unmappable",
+            Fields = [new UnresolvedField { ElementId = "el-1", Label = "Favorite pizza topping", InputType = "text" }],
+        };
+
+        using var response = await client.PostAsJsonAsync("/api/autofill/resolve", request, TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<ResolveFieldsResponse>(TestJson.Options);
+        body.ShouldNotBeNull();
+        body.Resolutions.ShouldHaveSingleItem().CanonicalKey.ShouldBe(string.Empty);
     }
 
     [Fact]

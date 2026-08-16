@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, ShieldAlert } from 'lucide-react';
+import { Cpu, KeyRound, ShieldAlert } from 'lucide-react';
 import { useProfile, useUpdateBasics } from '@/api/queries';
 import type { ResumeBasics } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
@@ -7,14 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Input } from '@/components/ui/Input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
-
-const MODEL_OPTIONS = [
-  { value: 'claude-sonnet-5', label: 'Claude Sonnet 5 (default)' },
-  { value: 'claude-opus-5', label: 'Claude Opus 5' },
-  { value: 'claude-haiku-5', label: 'Claude Haiku 5' },
-];
 
 const EMPTY_BASICS: ResumeBasics = { fullName: '' };
 
@@ -34,13 +27,11 @@ export default function Settings() {
   const updateBasics = useUpdateBasics();
 
   const [basics, setBasics] = useState<ResumeBasics>(EMPTY_BASICS);
-  const [model, setModel] = useState('claude-sonnet-5');
   const [savedRecently, setSavedRecently] = useState(false);
 
   useEffect(() => {
     if (profile.data) {
       setBasics(profile.data.basics);
-      setModel(profile.data.model);
     }
   }, [profile.data]);
 
@@ -109,29 +100,22 @@ export default function Settings() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Model preference</CardTitle>
-              <CardDescription>Which Anthropic model proposes tailoring commands.</CardDescription>
+              <CardTitle>Language model</CardTitle>
+              <CardDescription>
+                Which provider and model proposes tailoring commands — chosen by the server, not per session.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-col gap-1.5 sm:max-w-xs">
-                <label htmlFor="model-select" className="text-xs font-medium text-[var(--text-muted)]">
-                  Model
-                </label>
-                <Select value={model} onValueChange={setModel}>
-                  <SelectTrigger id="model-select">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MODEL_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-[var(--text-faint)]">
-                  Stored locally until the API exposes a model preference endpoint.
-                </p>
+              <div className="flex items-start gap-3">
+                <Cpu className="mt-0.5 h-5 w-5 text-[var(--text-muted)]" aria-hidden="true" />
+                <div>
+                  <Badge tone={profile.data.hasApiKey ? 'success' : 'neutral'}>{profile.data.model}</Badge>
+                  <p className="mt-1.5 text-sm text-[var(--text-muted)]">
+                    Set by <code>ResumeForge:Ai:Provider</code> (or an API key environment variable) on the API
+                    server — DeepSeek, OpenAI, Anthropic, a local LM Studio server, or any other OpenAI-compatible
+                    endpoint. See the README for the full provider table.
+                  </p>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -148,7 +132,7 @@ export default function Settings() {
                   <div>
                     <Badge tone="success">Configured</Badge>
                     <p className="mt-1.5 text-sm text-[var(--text-muted)]">
-                      ANTHROPIC_API_KEY is set on the server. Tailoring runs use the live model.
+                      A model provider is configured on the server. Tailoring runs use the live model.
                     </p>
                   </div>
                 </div>
@@ -158,9 +142,10 @@ export default function Settings() {
                   <div>
                     <Badge tone="warning">Not configured</Badge>
                     <p className="mt-1.5 text-sm text-[var(--text-muted)]">
-                      No ANTHROPIC_API_KEY is set on the server, so tailoring runs fall back to the deterministic
-                      heuristic model. Set the environment variable and restart the API to enable model-backed
-                      rewrites.
+                      No model provider is configured on the server, so tailoring runs fall back to the
+                      deterministic heuristic model. Set an API key environment variable (or point
+                      <code> ResumeForge:Ai:Provider</code> at a local LM Studio server) and restart the API to
+                      enable model-backed rewrites.
                     </p>
                   </div>
                 </div>

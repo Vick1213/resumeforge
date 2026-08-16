@@ -21,9 +21,10 @@ public static class ServiceCollectionExtensions
 {
     /// <summary>
     /// Adds the markdown knowledge base, skill taxonomy, EF/SQLite persistence, resume
-    /// renderers, job posting fetcher, GitHub importer, and language model stack (picking
-    /// <see cref="HeuristicLanguageModel"/> automatically when no Anthropic API key is
-    /// configured, per CONTRACTS.md §8).
+    /// renderers, job posting fetcher, GitHub importer, and language model stack — resolving
+    /// <c>ResumeForge:Ai:Provider</c> to a concrete provider (falling back to
+    /// <see cref="HeuristicLanguageModel"/>, which needs no key, when <c>auto</c> finds
+    /// neither <c>DEEPSEEK_API_KEY</c> nor <c>ANTHROPIC_API_KEY</c>) per CONTRACTS.md §8.
     /// </summary>
     public static IServiceCollection AddResumeForgeInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
@@ -122,39 +123,77 @@ public static class ServiceCollectionExtensions
         services.TryAddScoped<IGitHubProjectImporter, GitHubProjectImporter>();
     }
 
+    /// <summary>
+    /// Resolves the <c>ResumeForge:Ai</c> provider preset (CONTRACTS.md §8) and wires up
+    /// every <see cref="ILanguageModel"/> implementation. All three cores
+    /// (<see cref="AnthropicLanguageModel"/>, <see cref="OpenAiCompatibleLanguageModel"/>,
+    /// <see cref="HeuristicLanguageModel"/>) are always registered — only the resolved
+    /// preset's wire format decides which one the <see cref="ILanguageModel"/> factory
+    /// actually constructs, so the other two never touch the network or the filesystem.
+    /// </summary>
     private static void AddAi(IServiceCollection services, IConfiguration configuration)
     {
         var aiSection = configuration.GetSection("ResumeForge:Ai");
+        string? Get(string key) => aiSection[key] is { Length: > 0 } value ? value : null;
+
+        var providerName = AiProviderCatalog.ResolveProviderName(Get("Provider"), Environment.GetEnvironmentVariable);
+        if (!AiProviderCatalog.TryGetPreset(providerName, out var preset))
+        {
+            // An unlisted provider name (Together, Groq, Ollama, vLLM, OpenRouter, ...) is
+            // treated as a generic OpenAI-wire endpoint per CONTRACTS.md §8 ("an unlisted
+            // provider needs config only, never a code change") — BaseUrl/Model/ApiKey must
+            // all be supplied via ResumeForge:Ai:* config in that case.
+            preset = new AiProviderPreset { Name = providerName, Wire = AiWireFormat.OpenAi, BaseUrl = string.Empty, Model = string.Empty, KeyEnvironmentVariable = null };
+        }
+
+        var apiKey = Get("ApiKey") ?? (preset.KeyEnvironmentVariable is { } envVar ? Environment.GetEnvironmentVariable(envVar) : null);
+
         var aiOptions = new AiOptions
         {
-            Model = aiSection["Model"] is { Length: > 0 } model ? model : "claude-sonnet-5",
-            ApiKey = aiSection["ApiKey"],
-            BaseUrl = aiSection["BaseUrl"] is { Length: > 0 } baseUrl ? baseUrl : "https://api.anthropic.com",
-            AnthropicVersion = aiSection["AnthropicVersion"] is { Length: > 0 } version ? version : "2023-06-01",
+            Provider = preset.Name,
+            Model = Get("Model") ?? preset.Model,
+            ApiKey = apiKey,
+            BaseUrl = Get("BaseUrl") ?? preset.BaseUrl,
+            AnthropicVersion = Get("AnthropicVersion") ?? "2023-06-01",
+            StructuredOutput = Get("StructuredOutput") ?? "auto",
         };
 
         services.TryAddSingleton(aiOptions);
         services.TryAddSingleton<JsonSchemaRegistry>();
+        services.TryAddSingleton<StructuredOutputStrategyMemo>();
 
         services.AddHttpClient(AnthropicLanguageModel.HttpClientName, client =>
         {
-            client.BaseAddress = new Uri(aiOptions.BaseUrl);
+            client.BaseAddress = new Uri(aiOptions.BaseUrl is { Length: > 0 } url ? url : AiProviderCatalog.Anthropic.BaseUrl);
             client.Timeout = TimeSpan.FromSeconds(60);
             client.DefaultRequestHeaders.Add("anthropic-version", aiOptions.AnthropicVersion);
         });
 
-        services.TryAddSingleton<HeuristicLanguageModel>();
-        services.TryAddSingleton<AnthropicLanguageModel>();
+        services.AddHttpClient(OpenAiCompatibleLanguageModel.HttpClientName, client =>
+        {
+            // HttpClient only appends a relative request URI ("chat/completions") after
+            // the base address's last path segment when that base address ends in '/' —
+            // otherwise it replaces the segment (dropping "/v1" from the openai/lmstudio
+            // presets entirely). Falls back to the openai preset's URL when unset (e.g. the
+            // resolved provider is heuristic, so this client is registered but never used)
+            // so building it never throws.
+            var baseUrl = aiOptions.BaseUrl is { Length: > 0 } url ? url : AiProviderCatalog.OpenAi.BaseUrl;
+            client.BaseAddress = new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/");
+            client.Timeout = TimeSpan.FromSeconds(60);
+        });
 
-        var hasApiKey =
-            !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")) ||
-            !string.IsNullOrWhiteSpace(aiOptions.ApiKey);
+        services.TryAddScoped<HeuristicLanguageModel>();
+        services.TryAddSingleton<AnthropicLanguageModel>();
+        services.TryAddSingleton<OpenAiCompatibleLanguageModel>();
 
         services.TryAddScoped<ILanguageModel>(sp =>
         {
-            ILanguageModel selected = hasApiKey
-                ? sp.GetRequiredService<AnthropicLanguageModel>()
-                : sp.GetRequiredService<HeuristicLanguageModel>();
+            ILanguageModel selected = preset.Wire switch
+            {
+                AiWireFormat.Anthropic => sp.GetRequiredService<AnthropicLanguageModel>(),
+                AiWireFormat.OpenAi => sp.GetRequiredService<OpenAiCompatibleLanguageModel>(),
+                _ => sp.GetRequiredService<HeuristicLanguageModel>(),
+            };
 
             return new CachingLanguageModel(selected, sp.GetRequiredService<ResumeForgeDbContext>(), sp.GetRequiredService<TimeProvider>());
         });

@@ -71,44 +71,117 @@ public sealed class ServiceCollectionExtensionsTests
     [Fact]
     public void ILanguageModel_wraps_the_heuristic_model_when_no_api_key_is_configured()
     {
-        var previous = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-        Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", null);
+        using var env = new ScopedEnvironmentVariables(("ANTHROPIC_API_KEY", null), ("DEEPSEEK_API_KEY", null));
 
-        try
-        {
-            using var provider = BuildProvider();
-            using var scope = provider.CreateScope();
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
 
-            var languageModel = scope.ServiceProvider.GetRequiredService<ILanguageModel>();
+        var languageModel = scope.ServiceProvider.GetRequiredService<ILanguageModel>();
 
-            languageModel.ShouldBeOfType<CachingLanguageModel>();
-            languageModel.ModelId.ShouldBe("heuristic-v1");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", previous);
-        }
+        languageModel.ShouldBeOfType<CachingLanguageModel>();
+        languageModel.ModelId.ShouldBe("heuristic-v1");
     }
 
     [Fact]
-    public void ILanguageModel_wraps_the_anthropic_model_when_an_api_key_is_configured()
+    public void ILanguageModel_wraps_the_anthropic_model_when_an_anthropic_api_key_is_configured()
     {
-        var previous = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-        Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", "test-key-value");
+        using var env = new ScopedEnvironmentVariables(("ANTHROPIC_API_KEY", "test-key-value"), ("DEEPSEEK_API_KEY", null));
 
-        try
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        var languageModel = scope.ServiceProvider.GetRequiredService<ILanguageModel>();
+
+        languageModel.ShouldBeOfType<CachingLanguageModel>();
+        languageModel.ModelId.ShouldBe("anthropic/claude-sonnet-5");
+    }
+
+    [Fact]
+    public void ILanguageModel_wraps_the_deepseek_model_when_a_deepseek_api_key_is_configured()
+    {
+        using var env = new ScopedEnvironmentVariables(("ANTHROPIC_API_KEY", null), ("DEEPSEEK_API_KEY", "sk-deepseek"));
+
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        var languageModel = scope.ServiceProvider.GetRequiredService<ILanguageModel>();
+
+        languageModel.ShouldBeOfType<CachingLanguageModel>();
+        languageModel.ModelId.ShouldBe("deepseek/deepseek-chat");
+    }
+
+    [Fact]
+    public void Auto_prefers_deepseek_over_anthropic_when_both_keys_are_present()
+    {
+        using var env = new ScopedEnvironmentVariables(("ANTHROPIC_API_KEY", "sk-ant"), ("DEEPSEEK_API_KEY", "sk-deepseek"));
+
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        scope.ServiceProvider.GetRequiredService<ILanguageModel>().ModelId.ShouldBe("deepseek/deepseek-chat");
+    }
+
+    [Fact]
+    public void Auto_never_selects_lmstudio_even_with_no_keys_configured()
+    {
+        using var env = new ScopedEnvironmentVariables(("ANTHROPIC_API_KEY", null), ("DEEPSEEK_API_KEY", null));
+
+        using var provider = BuildProvider();
+        using var scope = provider.CreateScope();
+
+        // Falls all the way to heuristic — never lmstudio, which requires a server the user
+        // deliberately started (CONTRACTS.md §8).
+        scope.ServiceProvider.GetRequiredService<ILanguageModel>().ModelId.ShouldBe("heuristic-v1");
+    }
+
+    [Fact]
+    public void An_explicit_lmstudio_provider_is_honored_and_carries_the_configured_model_in_its_id()
+    {
+        using var env = new ScopedEnvironmentVariables(("ANTHROPIC_API_KEY", null), ("DEEPSEEK_API_KEY", null));
+
+        using var provider = BuildProvider(settings =>
         {
-            using var provider = BuildProvider();
-            using var scope = provider.CreateScope();
+            settings["ResumeForge:Ai:Provider"] = "lmstudio";
+            settings["ResumeForge:Ai:Model"] = "qwen3-8b";
+        });
+        using var scope = provider.CreateScope();
 
-            var languageModel = scope.ServiceProvider.GetRequiredService<ILanguageModel>();
+        var languageModel = scope.ServiceProvider.GetRequiredService<ILanguageModel>();
 
-            languageModel.ShouldBeOfType<CachingLanguageModel>();
-            languageModel.ModelId.ShouldBe("claude-sonnet-5");
+        languageModel.ModelId.ShouldBe("lmstudio/qwen3-8b");
+    }
+
+    [Fact]
+    public void An_explicit_provider_selection_overrides_auto_even_with_no_matching_key()
+    {
+        using var env = new ScopedEnvironmentVariables(("ANTHROPIC_API_KEY", null), ("DEEPSEEK_API_KEY", null));
+
+        using var provider = BuildProvider(settings => settings["ResumeForge:Ai:Provider"] = "anthropic");
+        using var scope = provider.CreateScope();
+
+        scope.ServiceProvider.GetRequiredService<ILanguageModel>().ModelId.ShouldBe("anthropic/claude-sonnet-5");
+    }
+
+    /// <summary>Sets environment variables for the lifetime of the instance, restoring the previous values on dispose.</summary>
+    private sealed class ScopedEnvironmentVariables : IDisposable
+    {
+        private readonly (string Name, string? Previous)[] _previous;
+
+        public ScopedEnvironmentVariables(params (string Name, string? Value)[] values)
+        {
+            _previous = values.Select(v => (v.Name, Environment.GetEnvironmentVariable(v.Name))).ToArray();
+            foreach (var (name, value) in values)
+            {
+                Environment.SetEnvironmentVariable(name, value);
+            }
         }
-        finally
+
+        public void Dispose()
         {
-            Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", previous);
+            foreach (var (name, previous) in _previous)
+            {
+                Environment.SetEnvironmentVariable(name, previous);
+            }
         }
     }
 }
