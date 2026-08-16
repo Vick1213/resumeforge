@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResumeForge — bounded-cost resume tailoring</title>
+<meta name="description" content="A resume-tailoring pipeline and Chrome extension where token spend scales with the number of decisions made, not the text already written. Deterministic scoring, a validated command protocol, and a three-tier autofill cascade. Runs with no API key.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="ResumeForge — bounded-cost resume tailoring">
+<meta property="og:description" content="Token spend scales with decisions, not with text already written. One principle, applied to a resume-tailoring DAG and a Chrome autofill extension.">
+<meta property="og:url" content="https://vick1213.github.io/resumeforge/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="ResumeForge — bounded-cost resume tailoring">
+<meta name="twitter:description" content="Token spend scales with decisions, not with text already written. One principle, applied to a resume-tailoring DAG and a Chrome autofill extension.">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --bg-alt: #f5f6f8;
+    --surface: #ffffff;
+    --surface-alt: #eef0f3;
+    --text: #1a1d23;
+    --text-muted: #4c5361;
+    --border: #d8dbe1;
+    --border-strong: #aeb4c0;
+    --link: #1d5aa3;
+    --link-visited: #5b3a9a;
+    --focus: #1d5aa3;
+    --accent: #a2570a;
+    --accent-bg: #fbeedb;
+    --accent-border: #c97a1f;
+    --accent-text: #7a4409;
+    --success: #1c7a4a;
+    --success-bg: #e4f3ea;
+    --success-border: #3f9a6a;
+    --info-bg: #e8eef7;
+    --info-border: #7fa3cc;
+    --code-bg: #f0f1f4;
+    --code-text: #1a1d23;
+    --node-bg: #ffffff;
+    --node-border: #b7bcc6;
+    --node-text: #262a31;
+    --shadow: rgba(20, 24, 32, 0.08);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #0e1013;
+      --bg-alt: #14171c;
+      --surface: #171a20;
+      --surface-alt: #1e222a;
+      --text: #e7e9ed;
+      --text-muted: #a7aeb9;
+      --border: #2b3038;
+      --border-strong: #3d434e;
+      --link: #7cb1ec;
+      --link-visited: #b79ae8;
+      --focus: #7cb1ec;
+      --accent: #e0983f;
+      --accent-bg: #2c2211;
+      --accent-border: #c9862f;
+      --accent-text: #f2bd77;
+      --success: #55c48c;
+      --success-bg: #132a1f;
+      --success-border: #2f7350;
+      --info-bg: #182533;
+      --info-border: #3c5977;
+      --code-bg: #191d23;
+      --code-text: #dfe3e8;
+      --node-bg: #1a1e25;
+      --node-border: #3a4048;
+      --node-text: #d7dbe1;
+      --shadow: rgba(0, 0, 0, 0.5);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    font-size: 17px;
+    overflow-x: hidden;
+  }
+
+  code, pre, kbd, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  a {
+    color: var(--link);
+    text-underline-offset: 0.15em;
+  }
+  a:visited { color: var(--link-visited); }
+
+  a:focus-visible,
+  button:focus-visible,
+  summary:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  .skip-link {
+    position: absolute;
+    left: -999px;
+    top: auto;
+    background: var(--surface);
+    color: var(--text);
+    padding: 0.75em 1.25em;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    z-index: 100;
+  }
+  .skip-link:focus {
+    left: 1rem;
+    top: 1rem;
+  }
+
+  h1, h2, h3 { line-height: 1.25; font-weight: 700; }
+  h1 { font-size: clamp(2rem, 5vw, 2.9rem); margin: 0 0 0.5em; }
+  h2 { font-size: clamp(1.5rem, 3.4vw, 1.9rem); margin: 0 0 0.6em; }
+  h3 { font-size: 1.15rem; margin: 1.6em 0 0.5em; }
+
+  p { margin: 0 0 1em; max-width: 72ch; }
+
+  .site-header {
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-alt);
+  }
+  .site-header-inner {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 0.9rem 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .wordmark {
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .site-nav {
+    display: flex;
+    gap: 1.1rem;
+    flex-wrap: wrap;
+    font-size: 0.92rem;
+  }
+  .site-nav a {
+    color: var(--text-muted);
+    text-decoration: none;
+  }
+  .site-nav a:hover, .site-nav a:focus-visible { color: var(--link); text-decoration: underline; }
+
+  main { display: block; }
+
+  .section {
+    padding: 3.4rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .section:last-of-type { border-bottom: none; }
+  .section-alt { background: var(--bg-alt); }
+  .section-inner {
+    max-width: 780px;
+    margin: 0 auto;
+  }
+  .section-inner-wide { max-width: 880px; }
+
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--accent-text);
+    margin: 0 0 0.6em;
+  }
+
+  .lede { font-size: 1.1rem; color: var(--text-muted); max-width: 68ch; }
+
+  /* Hero */
+  .hero {
+    padding: 4rem 1.25rem 3rem;
+  }
+  .hero-inner { max-width: 780px; margin: 0 auto; }
+  .hero-hook {
+    font-size: 1.15rem;
+    border-left: 3px solid var(--accent-border);
+    padding-left: 1rem;
+    margin: 1.4rem 0 1.8rem;
+    color: var(--text);
+  }
+  .hero-hook strong { color: var(--accent-text); }
+
+  .btn-row { display: flex; gap: 0.8rem; flex-wrap: wrap; margin-top: 1.6rem; }
+  .btn {
+    display: inline-block;
+    padding: 0.7em 1.3em;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.98rem;
+    border: 1px solid transparent;
+  }
+  .btn-primary {
+    background: var(--text);
+    color: var(--bg);
+  }
+  @media (prefers-color-scheme: dark) {
+    .btn-primary { background: var(--text); color: var(--bg); }
+  }
+  .btn-primary:visited { color: var(--bg); }
+  .btn-primary:hover { opacity: 0.88; }
+  .btn-secondary {
+    background: transparent;
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .btn-secondary:visited { color: var(--text); }
+  .btn-secondary:hover { background: var(--surface-alt); }
+
+  .stat-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.6rem;
+    margin: 2.2rem 0 0.4rem;
+    padding-top: 1.6rem;
+    border-top: 1px solid var(--border);
+  }
+  .stat { min-width: 140px; }
+  .stat-num {
+    display: block;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--accent-text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .stat-label { font-size: 0.85rem; color: var(--text-muted); }
+
+  /* Diagrams */
+  figure { margin: 1.8rem 0; }
+  .diagram-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 0.5rem;
+  }
+  .diagram-wrap svg { display: block; min-width: 640px; width: 100%; height: auto; }
+  figcaption {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-top: 0.7rem;
+  }
+
+  .node rect { fill: var(--node-bg); stroke: var(--node-border); stroke-width: 1.3; }
+  .node text { fill: var(--node-text); }
+  .node-accent rect { fill: var(--accent-bg); stroke: var(--accent-border); stroke-width: 1.8; }
+  .node-accent text { fill: var(--accent-text); }
+  .edge { stroke: var(--border-strong); stroke-width: 1.4; fill: none; }
+  .edge-secondary { stroke: var(--border-strong); stroke-width: 1.3; fill: none; stroke-dasharray: 4 3; opacity: 0.85; }
+  .arrowhead { fill: var(--border-strong); }
+  .annot { fill: var(--accent-text); font-style: italic; }
+  .row-label { fill: var(--text-muted); }
+
+  .seg-adapter { fill: var(--info-bg); stroke: var(--info-border); }
+  .seg-heuristic { fill: var(--surface-alt); stroke: var(--border-strong); }
+  .seg-model { fill: var(--accent-bg); stroke: var(--accent-border); }
+  .seg-cache { fill: var(--success-bg); stroke: var(--success-border); }
+  .seg-label { font-size: 11px; }
+  .lane-label { font-weight: 600; font-size: 12.5px; fill: var(--text); }
+  .callout-cost { font-weight: 700; font-size: 12.5px; }
+  .callout-cost.spend { fill: var(--accent-text); }
+  .callout-cost.free { fill: var(--success); }
+  .callout-sub { font-size: 10.5px; fill: var(--text-muted); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 1.1rem; margin-top: 0.9rem; font-size: 0.85rem; color: var(--text-muted); }
+  .legend-item { display: flex; align-items: center; gap: 0.4rem; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--border-strong); display: inline-block; }
+  .swatch-adapter { background: var(--info-bg); border-color: var(--info-border); }
+  .swatch-heuristic { background: var(--surface-alt); }
+  .swatch-model { background: var(--accent-bg); border-color: var(--accent-border); }
+  .swatch-cache { background: var(--success-bg); border-color: var(--success-border); }
+  .swatch-node { background: var(--node-bg); }
+  .swatch-node-accent { background: var(--accent-bg); border-color: var(--accent-border); }
+
+  /* Code blocks */
+  .code-block {
+    overflow-x: auto;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    margin: 1.2rem 0;
+  }
+  .code-block pre { margin: 0; }
+  .code-block code {
+    color: var(--code-text);
+    font-size: 0.88rem;
+    white-space: pre;
+  }
+
+  /* Cards */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin: 1.4rem 0;
+  }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.2rem;
+    background: var(--surface);
+  }
+  .card h3, .card h4 {
+    margin: 0 0 0.4em;
+    font-size: 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .card p { margin: 0; font-size: 0.93rem; color: var(--text-muted); }
+  .card .tag {
+    display: inline-block;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+    padding: 0.15em 0.5em;
+    border-radius: 4px;
+    margin-bottom: 0.5em;
+  }
+  .tag-free { background: var(--success-bg); color: var(--success); }
+  .tag-spend { background: var(--accent-bg); color: var(--accent-text); }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; margin: 1.4rem 0; }
+  table { border-collapse: collapse; width: 100%; min-width: 480px; font-size: 0.92rem; }
+  caption { text-align: left; color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5em; }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 0.5em 0.7em;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--surface-alt); font-weight: 700; }
+  td code, th code { font-size: 0.85em; }
+
+  /* Callouts */
+  .callout {
+    border: 1px solid var(--border-strong);
+    background: var(--surface-alt);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    margin: 1.5rem 0;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout-trust {
+    border-color: var(--success-border);
+    background: var(--success-bg);
+  }
+  .callout-trust strong { color: var(--success); }
+
+  ul.plain { list-style: none; padding: 0; margin: 0 0 1em; }
+  ul.checklist { padding-left: 0; list-style: none; margin: 1em 0; }
+  ul.checklist li {
+    padding-left: 1.6em;
+    position: relative;
+    margin-bottom: 0.6em;
+  }
+  ul.checklist li::before {
+    content: "—";
+    position: absolute;
+    left: 0;
+    color: var(--accent-border);
+  }
+
+  ol.steps { padding-left: 1.3em; }
+  ol.steps li { margin-bottom: 0.5em; }
+
+  .kv-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 0.5rem 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    margin: 1.2rem 0;
+    color: var(--text-muted);
+  }
+  .kv-grid span { display: block; padding: 0.3em 0; border-bottom: 1px dotted var(--border); }
+
+  footer.site-footer {
+    padding: 2.4rem 1.25rem 3rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+  footer.site-footer a { color: var(--text-muted); }
+
+  @media (max-width: 620px) {
+    body { font-size: 16px; }
+    .section { padding: 2.4rem 1rem; }
+    .hero { padding: 2.8rem 1rem 2rem; }
+    .btn-row { flex-direction: column; align-items: stretch; }
+    .btn { text-align: center; }
+  }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a class="wordmark" href="#top">ResumeForge</a>
+    <nav class="site-nav" aria-label="Page sections">
+      <a href="#cost">Cost model</a>
+      <a href="#tailoring">Tailoring</a>
+      <a href="#autofill">Autofill</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#quick-start">Quick start</a>
+      <a href="https://github.com/Vick1213/resumeforge">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="hero" id="top">
+    <div class="hero-inner">
+      <h1>ResumeForge</h1>
+      <p class="lede">
+        A resume-tailoring pipeline and a companion Chrome autofill extension.
+        Deterministic C# scores your knowledge base against a job posting and
+        fills out application forms from it; a language model is only invoked
+        for the handful of decisions that genuinely require judgment.
+      </p>
+      <p class="hero-hook">
+        <strong>Token spend scales with the number of decisions being made,
+        not with the amount of text already written.</strong> That's one rule,
+        applied independently to two different subsystems: tailoring a resume,
+        and filling out a form.
+      </p>
+      <div class="btn-row">
+        <a class="btn btn-primary" href="https://github.com/Vick1213/resumeforge">View on GitHub</a>
+        <a class="btn btn-secondary" href="#quick-start">Quick start</a>
+      </div>
+      <div class="stat-strip">
+        <div class="stat">
+          <span class="stat-num">~600</span>
+          <span class="stat-label">output tokens per tailoring run, independent of resume length</span>
+        </div>
+        <div class="stat">
+          <span class="stat-num">1 / 14</span>
+          <span class="stat-label">pipeline nodes that ever call a model</span>
+        </div>
+        <div class="stat">
+          <span class="stat-num">≥0.72</span>
+          <span class="stat-label">confidence needed for the free heuristic autofill tier</span>
+        </div>
+        <div class="stat">
+          <span class="stat-num">0</span>
+          <span class="stat-label">tokens spent on the same form's second visit</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-alt" id="cost">
+    <div class="section-inner">
+      <p class="eyebrow">The cost argument</p>
+      <h2>Do everything determinism can do first</h2>
+      <p>
+        The naive way to tailor a resume with a model is to hand it the whole
+        resume and the job posting and ask for a rewrite back. Every bullet
+        you didn't change still has to be regenerated — and billed — because a
+        complete document has to come back out. Do that across two dozen
+        applications and you've spent most of your token budget having your
+        own unchanged sentences read back to you.
+      </p>
+      <p>
+        ResumeForge scores the resume against the job posting in deterministic
+        C# first — BM25 relevance, skill overlap, recency — and only asks the
+        model to make the decisions a human editor would actually make: what
+        to include, what order to put things in, which pre-written phrasing to
+        use. The model's output is a short list of commands, not a resume, so
+        its cost is bounded by the number of decisions, not by how much resume
+        exists to describe. The same move — resolve everything determinism can
+        resolve first, spend the model's budget only on the genuine residue,
+        cache the result so you never pay for the same judgment twice — shows
+        up again in the autofill extension, applied to a completely different
+        problem.
+      </p>
+    </div>
+
+    <div class="section-inner section-inner-wide">
+      <figure>
+        <h3 id="dag-diagram-title" style="margin-top:0">The tailoring pipeline: 14 nodes, 1 model call</h3>
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 720 820" role="img" aria-labelledby="dag-title dag-desc" xmlns="http://www.w3.org/2000/svg">
+            <title id="dag-title">Tailoring pipeline graph</title>
+            <desc id="dag-desc">
+              Fourteen nodes wired as a dependency graph. fetch-jd and load-kb start
+              independently with no inputs. analyze-jd depends on fetch-jd; build-base
+              depends on load-kb. score-experience, score-projects and score-skills each
+              depend on both analyze-jd and build-base, and run concurrently since none of
+              them reads another's output. All three feed build-brief, which feeds
+              propose-commands — the only node that calls a language model, highlighted in
+              amber. validate-commands depends on build-base and on propose-commands'
+              output, and is followed by three more concurrent siblings — verify-fabrication,
+              verify-coverage and execute-commands — which all feed the final render node.
+              Every node except propose-commands is deterministic C# with no model call.
+            </desc>
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" class="arrowhead"></path>
+              </marker>
+            </defs>
+
+            <!-- edges -->
+            <g>
+              <line class="edge" x1="220" y1="72" x2="220" y2="128" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="500" y1="72" x2="500" y2="128" marker-end="url(#arrow)"></line>
+
+              <line class="edge" x1="220" y1="172" x2="130" y2="228" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="220" y1="172" x2="360" y2="228" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="220" y1="172" x2="590" y2="228" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="500" y1="172" x2="130" y2="228" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="500" y1="172" x2="360" y2="228" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="500" y1="172" x2="590" y2="228" marker-end="url(#arrow)"></line>
+
+              <line class="edge" x1="130" y1="272" x2="360" y2="328" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="360" y1="272" x2="360" y2="328" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="590" y1="272" x2="360" y2="328" marker-end="url(#arrow)"></line>
+
+              <line class="edge" x1="360" y1="372" x2="360" y2="424" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="360" y1="476" x2="360" y2="538" marker-end="url(#arrow)"></line>
+
+              <path class="edge-secondary" d="M580,150 L682,150 L682,560 L470,560" marker-end="url(#arrow)"></path>
+
+              <line class="edge" x1="360" y1="582" x2="130" y2="638" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="360" y1="582" x2="360" y2="638" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="360" y1="582" x2="590" y2="638" marker-end="url(#arrow)"></line>
+
+              <line class="edge" x1="130" y1="682" x2="360" y2="738" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="360" y1="682" x2="360" y2="738" marker-end="url(#arrow)"></line>
+              <line class="edge" x1="590" y1="682" x2="360" y2="738" marker-end="url(#arrow)"></line>
+            </g>
+
+            <text class="row-label" x="20" y="45" font-size="9.5">roots</text>
+            <text class="row-label" x="686" y="145" font-size="9">reads</text>
+            <text class="row-label" x="686" y="157" font-size="9">build-base</text>
+
+            <!-- nodes -->
+            <g class="node">
+              <rect x="140" y="28" width="160" height="44" rx="7"></rect>
+              <text x="220" y="55" text-anchor="middle" font-size="12">fetch-jd</text>
+            </g>
+            <g class="node">
+              <rect x="420" y="28" width="160" height="44" rx="7"></rect>
+              <text x="500" y="55" text-anchor="middle" font-size="12">load-kb</text>
+            </g>
+
+            <g class="node">
+              <rect x="140" y="128" width="160" height="44" rx="7"></rect>
+              <text x="220" y="155" text-anchor="middle" font-size="12">analyze-jd</text>
+            </g>
+            <g class="node">
+              <rect x="420" y="128" width="160" height="44" rx="7"></rect>
+              <text x="500" y="155" text-anchor="middle" font-size="12">build-base</text>
+            </g>
+
+            <g class="node">
+              <rect x="50" y="228" width="160" height="44" rx="7"></rect>
+              <text x="130" y="255" text-anchor="middle" font-size="11">score-experience</text>
+            </g>
+            <g class="node">
+              <rect x="280" y="228" width="160" height="44" rx="7"></rect>
+              <text x="360" y="255" text-anchor="middle" font-size="11">score-projects</text>
+            </g>
+            <g class="node">
+              <rect x="510" y="228" width="160" height="44" rx="7"></rect>
+              <text x="590" y="255" text-anchor="middle" font-size="11">score-skills</text>
+            </g>
+
+            <g class="node">
+              <rect x="250" y="328" width="220" height="44" rx="7"></rect>
+              <text x="360" y="355" text-anchor="middle" font-size="12.5">build-brief</text>
+            </g>
+
+            <g class="node node-accent">
+              <rect x="250" y="424" width="220" height="52" rx="8"></rect>
+              <text x="360" y="446" text-anchor="middle" font-size="12.5" font-weight="700">propose-commands</text>
+              <text x="360" y="463" text-anchor="middle" font-size="10.5" font-style="italic">calls the model</text>
+            </g>
+            <text class="annot" x="360" y="500" text-anchor="middle" font-size="10.5">~600 output tokens, capped by construction</text>
+
+            <g class="node">
+              <rect x="250" y="538" width="220" height="44" rx="7"></rect>
+              <text x="360" y="565" text-anchor="middle" font-size="12.5">validate-commands</text>
+            </g>
+
+            <g class="node">
+              <rect x="50" y="638" width="160" height="44" rx="7"></rect>
+              <text x="130" y="660" text-anchor="middle" font-size="10.5">verify-fabrication</text>
+            </g>
+            <g class="node">
+              <rect x="280" y="638" width="160" height="44" rx="7"></rect>
+              <text x="360" y="660" text-anchor="middle" font-size="11">verify-coverage</text>
+            </g>
+            <g class="node">
+              <rect x="510" y="638" width="160" height="44" rx="7"></rect>
+              <text x="590" y="660" text-anchor="middle" font-size="11">execute-commands</text>
+            </g>
+
+            <g class="node">
+              <rect x="260" y="738" width="200" height="44" rx="7"></rect>
+              <text x="360" y="765" text-anchor="middle" font-size="12.5">render</text>
+            </g>
+          </svg>
+        </div>
+        <div class="legend" aria-hidden="true">
+          <span class="legend-item"><span class="swatch swatch-node"></span>deterministic C#, no model call</span>
+          <span class="legend-item"><span class="swatch swatch-node-accent"></span>calls the model</span>
+          <span class="legend-item">dashed line — validate-commands also reads build-base's document, routed around the right margin</span>
+        </div>
+        <figcaption>
+          Declared in <code>TailoringGraphFactory</code>. Nodes at the same depth with no
+          edge between them — the three <code>score-*</code> nodes, and
+          <code>verify-fabrication</code> / <code>verify-coverage</code> / <code>execute-commands</code>
+          — run concurrently. Of the fourteen nodes, exactly one,
+          <code>propose-commands</code>, ever calls <code>ILanguageModel</code>.
+        </figcaption>
+      </figure>
+
+      <figure>
+        <h3>The autofill cascade: tokens drop to zero on the second visit</h3>
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 680 250" role="img" aria-labelledby="cascade-title cascade-desc" xmlns="http://www.w3.org/2000/svg">
+            <title id="cascade-title">Autofill token cost, first visit vs. second visit</title>
+            <desc id="cascade-desc">
+              An illustrative form with ten fields. On the first visit, four fields resolve
+              through a declarative board adapter, four more through the heuristic label
+              matcher, and two leftover fields go to the model in a single batched request —
+              one model call total. The response is persisted as a learned field map keyed by
+              host and form signature. On the next visit to a form with the same shape, all
+              ten fields resolve from the adapter, the heuristic matcher, or the cached map —
+              zero model calls.
+            </desc>
+            <defs>
+              <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" class="arrowhead"></path>
+              </marker>
+            </defs>
+
+            <text class="lane-label" x="20" y="18">First visit to a new form</text>
+            <g>
+              <rect class="seg-adapter" x="20" y="30" width="192" height="46" rx="4"></rect>
+              <text class="seg-label" x="116" y="57" text-anchor="middle">adapter</text>
+              <rect class="seg-heuristic" x="212" y="30" width="192" height="46" rx="4"></rect>
+              <text class="seg-label" x="308" y="57" text-anchor="middle">heuristic</text>
+              <rect class="seg-model" x="404" y="30" width="96" height="46" rx="4"></rect>
+              <text class="seg-label" x="452" y="52" text-anchor="middle">model</text>
+              <text class="seg-label" x="452" y="65" text-anchor="middle" font-size="9.5">2 fields</text>
+            </g>
+            <text class="callout-cost spend" x="512" y="53">1 batched call</text>
+            <text class="callout-sub" x="512" y="68">POST /api/autofill/resolve</text>
+
+            <line class="edge-secondary" x1="452" y1="76" x2="452" y2="128" marker-end="url(#arrow2)"></line>
+
+            <text class="lane-label" x="20" y="118">Same form, next visit</text>
+            <g>
+              <rect class="seg-adapter" x="20" y="130" width="192" height="46" rx="4"></rect>
+              <text class="seg-label" x="116" y="157" text-anchor="middle">adapter</text>
+              <rect class="seg-heuristic" x="212" y="130" width="192" height="46" rx="4"></rect>
+              <text class="seg-label" x="308" y="157" text-anchor="middle">heuristic</text>
+              <rect class="seg-cache" x="404" y="130" width="96" height="46" rx="4"></rect>
+              <text class="seg-label" x="452" y="152" text-anchor="middle">cached</text>
+              <text class="seg-label" x="452" y="165" text-anchor="middle" font-size="9.5">2 fields</text>
+            </g>
+            <text class="callout-cost free" x="512" y="153">0 model calls</text>
+            <text class="callout-sub" x="512" y="168">resolved from LearnedFieldMap</text>
+
+            <g class="legend-svg" font-size="10.5">
+              <rect class="seg-adapter" x="20" y="204" width="12" height="12"></rect>
+              <text x="38" y="213" fill="var(--text-muted)">board adapter</text>
+              <rect class="seg-heuristic" x="150" y="204" width="12" height="12"></rect>
+              <text x="168" y="213" fill="var(--text-muted)">heuristic matcher</text>
+              <rect class="seg-model" x="300" y="204" width="12" height="12"></rect>
+              <text x="318" y="213" fill="var(--text-muted)">model (spends tokens)</text>
+              <rect class="seg-cache" x="490" y="204" width="12" height="12"></rect>
+              <text x="508" y="213" fill="var(--text-muted)">cached (free)</text>
+            </g>
+          </svg>
+        </div>
+        <figcaption>
+          Illustrative field counts — the real split depends on the board and the form.
+          The tier-3 response is persisted as a <code>LearnedFieldMap</code> keyed by
+          <code>(host, formSignature)</code>; a form with the same shape resolves
+          entirely at tiers 1–2 speed on every later visit, with the model never invoked
+          again for that form.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="section" id="tailoring">
+    <div class="section-inner">
+      <p class="eyebrow">How tailoring works</p>
+      <h2>The model emits commands, not prose</h2>
+      <p>
+        <code>score-experience</code>, <code>score-projects</code> and
+        <code>score-skills</code> run BM25 relevance scoring plus a skill-overlap term
+        and a recency term over your knowledge base — plain C#, no model call,
+        producing a pre-scored candidate set of bullet IDs and requirement
+        matches. Only after that does anything reach the model, and what it
+        receives is a compact brief: requirement text plus truncated candidate
+        snippets, built by <code>build-brief</code> from all three scoring
+        nodes' output.
+      </p>
+      <p>
+        The model's entire output surface is a JSON array of commands,
+        discriminated by an <code>"op"</code> field, applied by deterministic
+        C# to the canonical resume document:
+      </p>
+      <div class="code-block">
+<pre><code>[
+  { "op": "exclude", "targets": ["exp:cascade-analytics", "prj:tinyorm"] },
+  { "op": "order", "parent": "exp:nimbus-systems",
+    "order": ["exp:nimbus-systems#0", "exp:nimbus-systems#2"] },
+  { "op": "selectVariant", "target": "exp:nimbus-systems#0", "variantIndex": 0 },
+  { "op": "emphasizeSkills", "skills": ["go", "csharp", "kafka"] }
+]</code></pre>
+      </div>
+      <p>
+        <code>exp:nimbus-systems</code>, <code>exp:cascade-analytics</code> and
+        <code>prj:tinyorm</code> are IDs from the sample knowledge base this
+        repo ships in <code>profile/</code> — the model never receives or
+        emits resume prose it doesn't have to; it references content by ID
+        instead of restating it.
+      </p>
+
+      <h3>Eight commands, one of which writes prose</h3>
+      <div class="table-wrap">
+        <table>
+          <caption>The full command vocabulary — <code>ResumeForge.Application.Tailoring.TailorCommand</code></caption>
+          <thead>
+            <tr><th><code>op</code></th><th>What it does</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>include</code> / <code>exclude</code></td><td>Flip an entry's or skill group's <code>Included</code> flag, or remove a bullet / individual skill from its parent's list.</td></tr>
+            <tr><td><code>order</code></td><td>Reorder a parent's children; anything omitted keeps its relative position after the listed ones.</td></tr>
+            <tr><td><code>selectVariant</code></td><td>Pick an existing pre-written phrasing from the knowledge base. Zero generation tokens — always preferred over <code>rewrite</code> when a suitable variant exists.</td></tr>
+            <tr><td><code>rewrite</code></td><td>The only command that emits prose. ≤300 characters, single line, must pass the anti-fabrication check, capped at <code>MaxRewrites</code> (default 6) per run.</td></tr>
+            <tr><td><code>setSummary</code></td><td>Replace the resume's summary block.</td></tr>
+            <tr><td><code>emphasizeSkills</code></td><td>Flag normalized skill names for visual emphasis.</td></tr>
+            <tr><td><code>setSectionOrder</code></td><td>Reorder the resume's top-level sections.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Validation runs before anything is applied</h3>
+      <p>
+        A command is <strong>rejected</strong>, not silently clamped, if it
+        fails validation — <code>ICommandValidator</code> reports every
+        rejection with a reason and a stable code:
+      </p>
+      <div class="kv-grid">
+        <span><code>unknown-target</code></span>
+        <span><code>duplicate-order-entry</code></span>
+        <span><code>rewrite-too-long</code></span>
+        <span><code>rewrite-multiline</code></span>
+        <span><code>fabricated-metric</code></span>
+        <span><code>rewrite-limit-exceeded</code></span>
+      </div>
+      <p>
+        The anti-fabrication check (<code>IFabricationGuard</code>) is
+        deterministic string comparison, not another model call: it extracts
+        number-like tokens (digits, percentages, <code>3x</code>-style
+        multipliers, identifiers like <code>p99</code>) and proper-noun-like
+        tokens (capitalized words) from both the original bullet and the
+        rewrite. A rewrite is rejected if it introduces a number that wasn't
+        in the original, or if the original bullet had a number or a proper
+        noun and the rewrite keeps neither. The model can re-angle a bullet;
+        it cannot invent a metric that passes validation.
+      </p>
+      <p>
+        <code>verify-fabrication</code> and <code>verify-coverage</code> —
+        the two nodes downstream of validation, run concurrently with each
+        other — are this same kind of deterministic check, not additional
+        model calls: one re-verifies accepted rewrites against the guard,
+        the other computes how much of the job's requirements the tailored
+        document actually evidences.
+      </p>
+
+      <h3>Concurrency and failure isolation</h3>
+      <p>
+        The graph executor (<code>ResumeForge.Application.Graph</code>) runs
+        every node whose dependencies are satisfied immediately, with no
+        artificial wave-by-wave barrier, capped by
+        <code>GraphOptions.MaxConcurrency</code>. A failed node marks its
+        transitive dependents <code>Skipped</code> and the run still returns
+        a partial result with the full trace — unless the node is declared
+        <code>Critical</code>, in which case the run fails outright.
+        <code>fetch-jd</code>, <code>load-kb</code>, <code>propose-commands</code>,
+        <code>validate-commands</code> and <code>execute-commands</code> are
+        the five nodes marked critical in the tailoring graph; a JD that
+        fails to fetch legitimately shows up as cascading <code>Skipped</code>
+        statuses downstream, not a crash. Cycle detection runs once, at
+        graph-build time.
+      </p>
+    </div>
+  </section>
+
+  <section class="section section-alt" id="autofill">
+    <div class="section-inner">
+      <p class="eyebrow">The autofill extension</p>
+      <h2>A three-tier cascade, and it never touches Submit</h2>
+      <p>
+        The Chrome extension (Manifest V3) fills job application forms from
+        your profile using the same cost discipline as tailoring: resolve
+        everything free tooling can resolve, spend the model only on the
+        genuine leftovers, remember the answer.
+      </p>
+
+      <div class="card-grid">
+        <div class="card">
+          <span class="tag tag-free">Tier 1 — free</span>
+          <h3>Board adapters</h3>
+          <p>
+            Declarative selector maps in <code>extension/src/adapters/</code>
+            for five boards — Greenhouse, Lever, Ashby, Workday,
+            SmartRecruiters. Matches by hostname, maps canonical field keys
+            straight to CSS selectors. No text scoring, no model call.
+          </p>
+        </div>
+        <div class="card">
+          <span class="tag tag-free">Tier 2 — free</span>
+          <h3>Heuristic matcher</h3>
+          <p>
+            Whatever the adapter didn't cover is scored against a canonical
+            key synonym table using label text, <code>name</code>/<code>id</code>/<code>autocomplete</code>
+            attributes, placeholder and <code>aria-label</code>, via
+            normalized token overlap. Accepted at confidence ≥0.72; below
+            that, left for tier 3 rather than guessed at.
+          </p>
+        </div>
+        <div class="card">
+          <span class="tag tag-spend">Tier 3 — one call</span>
+          <h3>Model fallback, cached</h3>
+          <p>
+            Whatever's still unresolved — usually a handful of fields —
+            is batched into <strong>one</strong> request to
+            <code>POST /api/autofill/resolve</code>. The response is
+            persisted as a <code>LearnedFieldMap</code> keyed by
+            <code>(host, formSignature)</code>; the same form's next visit
+            resolves it for free.
+          </p>
+        </div>
+      </div>
+
+      <div class="callout callout-trust">
+        <p>
+          <strong>Form-filling tools have a deservedly bad reputation.</strong>
+          This one is built the opposite way, and it's enforced in code, not
+          just documented: <code>extension/src/content/fill.ts</code> gates
+          every write path — text inputs, selects, radio groups, file
+          inputs — through <code>hasUnprotectedUserValue</code>, which
+          refuses to touch a field that already holds a value the extension
+          didn't write itself. There is no code path in <code>fill.ts</code>
+          that clicks a Submit, Apply or Continue control; the file's own
+          docstring on <code>applyFieldValue</code> states it plainly:
+          "this function never submits a form and never clicks a button."
+          Every proposed value is shown in a per-field accept/reject preview
+          before it touches the page's DOM — you submit every application
+          yourself.
+        </p>
+      </div>
+
+      <p>
+        The canonical field-key set is closed and shared verbatim between
+        the backend (<code>ResumeForge.Application.Autofill</code>) and the
+        extension (<code>extension/src/contracts.ts</code>) — things like
+        <code>firstName</code>, <code>email</code>, <code>linkedin</code>,
+        <code>workAuthorization</code>, <code>desiredSalary</code>. Nothing
+        resolves to a key outside that list, and a value of <code>null</code>
+        means "leave this field alone," never "fill it with an empty string."
+      </p>
+    </div>
+  </section>
+
+  <section class="section" id="no-api-key">
+    <div class="section-inner">
+      <p class="eyebrow">Runs with no API key</p>
+      <h2>The offline path is the default, not a fallback bolted on later</h2>
+      <p>
+        <code>ServiceCollectionExtensions.AddAi</code> checks for
+        <code>ANTHROPIC_API_KEY</code> at startup. When it's absent, the
+        container resolves <code>HeuristicLanguageModel</code> — no network
+        call, ranking rules only: include the top-scored candidates, pick the
+        best-matching pre-written variant, order by relevance score, never
+        write a <code>rewrite</code> command. It satisfies the same
+        <code>ILanguageModel</code> interface the real client does, so the
+        rest of the graph — validation, the fabrication guard, coverage
+        analysis, rendering — runs completely unaware of which one answered.
+      </p>
+      <p>
+        This means a stranger can clone the repo, run
+        <code>dotnet run --project backend/src/ResumeForge.Api</code> with
+        nothing configured, and watch the full tailoring pipeline execute
+        end to end against the sample knowledge base checked into
+        <code>profile/</code>. It's also what the backend's own test suite
+        runs against by default.
+      </p>
+    </div>
+  </section>
+
+  <section class="section section-alt" id="architecture">
+    <div class="section-inner section-inner-wide">
+      <p class="eyebrow">Architecture</p>
+      <h2>Four layers, one frozen contract</h2>
+      <p>
+        The backend is Clean Architecture in four projects, dependencies
+        pointing inward: <code>Domain</code> (records, <code>EntityId</code>,
+        the resume model — no dependencies of its own),
+        <code>Application</code> (use cases, the graph engine, scoring,
+        command validation — declares the ports it needs),
+        <code>Infrastructure</code> (EF Core, markdown I/O, QuestPDF
+        rendering, the language model clients — the only layer that knows
+        any of those exist), and <code>Api</code> (ASP.NET Core minimal
+        APIs, the composition root). The React frontend and the Chrome
+        extension are separate projects that talk to the API over HTTP —
+        neither links against the backend directly.
+      </p>
+      <p>
+        All three surfaces were built against <code>docs/CONTRACTS.md</code>,
+        a single markdown file that's the frozen source of truth for every
+        type crossing a component boundary: wire format rules, the canonical
+        resume model, the command protocol, the graph engine's node
+        interface, the autofill contracts, all in one document that backend,
+        frontend and extension code are expected to match exactly.
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <caption>Tech stack</caption>
+          <tbody>
+            <tr><th>Language / runtime</th><td>C# 13, .NET 10</td></tr>
+            <tr><th>API</th><td>ASP.NET Core minimal APIs, OpenAPI + Scalar (<code>/docs</code>)</td></tr>
+            <tr><th>Persistence</th><td>EF Core 10, SQLite</td></tr>
+            <tr><th>Rendering / parsing</th><td>QuestPDF, Markdig, YamlDotNet</td></tr>
+            <tr><th>Backend tests</th><td>xUnit v3, Shouldly, NSubstitute</td></tr>
+            <tr><th>Frontend</th><td>React 19, TypeScript (strict), Vite, TanStack Query, Tailwind CSS v4, Radix primitives</td></tr>
+            <tr><th>Frontend tests</th><td>Vitest, Testing Library</td></tr>
+            <tr><th>Extension</th><td>Manifest V3, TypeScript</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        <code>backend/tests</code> carries one xUnit project per backend
+        layer — 94 files, more than 360 <code>[Fact]</code>/<code>[Theory]</code>-attributed
+        test methods across them. The extension and frontend each carry
+        their own Vitest suites alongside the application code, in
+        <code>extension/tests</code> and <code>frontend/src</code>
+        respectively.
+      </p>
+
+      <!-- PROVIDERS:BEGIN (enable when OpenAiCompatibleLanguageModel ships)
+      <h3>Swappable model cores</h3>
+      <p>
+        The language model port has exactly three implementations, chosen at
+        composition time and split by wire format rather than by vendor,
+        since most hosted and local providers speak OpenAI's chat-completions
+        format:
+      </p>
+      <div class="table-wrap">
+        <table>
+          <caption>Provider presets — <code>ResumeForge:Ai:Provider</code></caption>
+          <thead>
+            <tr><th>Preset</th><th>Wire format</th><th>Default base URL</th><th>Default model</th><th>Key</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>deepseek</code></td><td>OpenAI</td><td><code>https://api.deepseek.com</code></td><td><code>deepseek-chat</code></td><td><code>DEEPSEEK_API_KEY</code></td></tr>
+            <tr><td><code>openai</code></td><td>OpenAI</td><td><code>https://api.openai.com/v1</code></td><td><code>gpt-4o</code></td><td><code>OPENAI_API_KEY</code></td></tr>
+            <tr><td><code>lmstudio</code></td><td>OpenAI</td><td><code>http://localhost:1234/v1</code></td><td>server's loaded model</td><td>none</td></tr>
+            <tr><td><code>anthropic</code></td><td>Anthropic</td><td><code>https://api.anthropic.com</code></td><td><code>claude-sonnet-5</code></td><td><code>ANTHROPIC_API_KEY</code></td></tr>
+            <tr><td><code>heuristic</code></td><td>none</td><td>—</td><td>—</td><td>none</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        <code>auto</code> is the default and resolves in order:
+        <code>DEEPSEEK_API_KEY</code> set → <code>deepseek</code>; else
+        <code>ANTHROPIC_API_KEY</code> set → <code>anthropic</code>; else
+        <code>heuristic</code>. <code>auto</code> never selects
+        <code>lmstudio</code> — that requires a server the user deliberately
+        started, and probing the network during DI registration isn't
+        acceptable; selecting it is explicit.
+      </p>
+      <div class="card-grid">
+        <div class="card">
+          <h4>OpenAiCompatibleLanguageModel</h4>
+          <p>
+            Serves the <code>deepseek</code>, <code>openai</code> and
+            <code>lmstudio</code> presets, and any other OpenAI-format
+            endpoint via config alone. Structured output degrades through
+            three strategies — forced tool call, JSON-schema response
+            format, prompted JSON — remembering whichever one worked for the
+            process lifetime, so the cost is one probe, not one per request.
+          </p>
+        </div>
+        <div class="card">
+          <h4>AnthropicLanguageModel</h4>
+          <p>
+            Serves the <code>anthropic</code> preset. Messages API,
+            structured output forced via <code>tool_choice</code> on a
+            single <code>emit_result</code> tool.
+          </p>
+        </div>
+        <div class="card">
+          <h4>HeuristicLanguageModel</h4>
+          <p>
+            No network. Used by <code>auto</code> when no key is present,
+            and in every test. The whole product works end to end on this
+            implementation alone.
+          </p>
+        </div>
+      </div>
+      <p>
+        A <code>CachingLanguageModel</code> decorator wraps whichever core is
+        selected, keyed on a SHA-256 of <code>(ModelId, System, User, SchemaName)</code>
+        — <code>ModelId</code> carries the resolved provider and model, so
+        switching cores can never serve a cached response from a different
+        model.
+      </p>
+      PROVIDERS:END -->
+    </div>
+  </section>
+
+  <section class="section" id="quick-start">
+    <div class="section-inner">
+      <p class="eyebrow">Quick start</p>
+      <h2>Nothing to configure to try it</h2>
+      <p>Prerequisites: .NET 10 SDK, Node 20+.</p>
+      <div class="code-block">
+<pre><code># Backend — http://localhost:5217, applies EF Core migrations automatically in Development
+dotnet restore
+dotnet run --project backend/src/ResumeForge.Api
+
+# Frontend — http://localhost:5173, proxies /api to the backend above
+cd frontend
+npm install
+npm run dev
+
+# Extension
+cd extension
+npm install
+npm run build
+# then load the build output as an unpacked extension via chrome://extensions</code></pre>
+      </div>
+      <p>
+        No API key needed — without <code>ANTHROPIC_API_KEY</code> set, the
+        backend registers <code>HeuristicLanguageModel</code> and the
+        pipeline runs fully offline against the sample knowledge base in
+        <code>profile/</code>. Point your browser at
+        <code>http://localhost:5173</code>, or the API's Scalar docs at
+        <code>http://localhost:5217/docs</code>.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <p>MIT licensed. <a href="https://github.com/Vick1213/resumeforge">github.com/Vick1213/resumeforge</a></p>
+</footer>
+
+</body>
+</html>
