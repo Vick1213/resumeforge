@@ -156,6 +156,39 @@ public sealed class CommandExecutorTests
     }
 
     [Fact]
+    public void Inject_keywords_replaces_bullet_text_and_records_keywords_injected_diff_with_keywords_populated()
+    {
+        var doc = NewDocument();
+        var command = new InjectKeywordsCommand
+        {
+            Target = "exp:acme#1",
+            Keywords = ["kubernetes", "postgresql"],
+            Text = "Bullet one, now mentioning Kubernetes and PostgreSQL.",
+        };
+
+        var result = _executor.Execute(doc, [command]);
+
+        var bullet = result.Document.Experience.Single(e => e.Id == "exp:acme").Bullets.Single(b => b.Id == "exp:acme#1");
+        bullet.Text.ShouldBe("Bullet one, now mentioning Kubernetes and PostgreSQL.");
+
+        var diff = result.Diff.Single();
+        diff.Kind.ShouldBe(DiffKind.KeywordsInjected);
+        diff.EntityId.ShouldBe("exp:acme#1");
+        diff.Before.ShouldBe("Bullet one.");
+        diff.After.ShouldBe("Bullet one, now mentioning Kubernetes and PostgreSQL.");
+        diff.Keywords.ShouldBe(["kubernetes", "postgresql"]);
+    }
+
+    [Fact]
+    public void Rewritten_and_variant_selected_diffs_carry_no_keywords()
+    {
+        var doc = NewDocument();
+        var result = _executor.Execute(doc, [new RewriteCommand { Target = "exp:acme#1", Text = "A rewritten bullet." }]);
+
+        result.Diff.Single().Keywords.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void Set_summary_updates_summary_and_records_diff()
     {
         var doc = NewDocument();

@@ -1,3 +1,5 @@
+import type { ModelEffort } from '../contracts';
+
 /** Extension-wide settings, persisted in `chrome.storage.local`. */
 export interface ExtensionSettings {
   backendBaseUrl: string;
@@ -7,11 +9,22 @@ export interface ExtensionSettings {
    * always run regardless of this setting.
    */
   allowModelFallback: boolean;
+  /**
+   * How much of the form gets handed to the model when tier 3 runs
+   * (CONTRACTS.md §10). Raising it raises the tier-2 heuristic's accept
+   * threshold too, so the free matcher keeps only what it's confident about
+   * and defers more to the model; at Thorough and above the model also
+   * drafts free-text answers for open questions. Spent tokens are still
+   * bounded by `allowModelFallback`, and once a form is learned, resolving
+   * it again is free regardless of this setting.
+   */
+  effort: ModelEffort;
 }
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   backendBaseUrl: 'http://localhost:5217',
-  allowModelFallback: true
+  allowModelFallback: true,
+  effort: 'standard'
 };
 
 const SETTINGS_KEY = 'resumeforge.settings';

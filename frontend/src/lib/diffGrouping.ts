@@ -8,6 +8,7 @@ export interface DiffGroup {
 
 const KIND_ORDER: DiffKind[] = [
   'rewritten',
+  'keywordsInjected',
   'variantSelected',
   'reordered',
   'included',
@@ -24,6 +25,7 @@ const KIND_LABELS: Record<DiffKind, string> = {
   variantSelected: 'Variant selected',
   summarySet: 'Summary set',
   skillEmphasized: 'Skills emphasized',
+  keywordsInjected: 'Keywords injected',
 };
 
 /** Groups diff entries by DiffKind, ordered so prose changes surface first. */

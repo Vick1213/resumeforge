@@ -11,6 +11,13 @@ public sealed record TailoringRequest
 
     /// <summary>Overrides <see cref="TailorOptions.MaxRewrites"/> for this run only.</summary>
     public int? MaxRewrites { get; init; }
+
+    /// <summary>
+    /// How much decision-making budget this run may spend the model on (CONTRACTS.md §6).
+    /// Defaults to <see cref="ModelEffort.Standard"/>, which is what every pre-effort
+    /// behaviour maps to — an omitted effort must reproduce the exact prior output.
+    /// </summary>
+    public ModelEffort Effort { get; init; } = ModelEffort.Standard;
 }
 
 /// <summary>

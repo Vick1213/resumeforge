@@ -17,6 +17,9 @@ public sealed record ResumeDiffEntry
 
     /// <summary>The rationale carried by the command that produced this change, if any.</summary>
     public string? Rationale { get; init; }
+
+    /// <summary>Populated only when <see cref="Kind"/> is <see cref="DiffKind.KeywordsInjected"/>: the keywords that were woven in.</summary>
+    public IReadOnlyList<string> Keywords { get; init; } = [];
 }
 
 /// <summary>The kind of change a <see cref="ResumeDiffEntry"/> records.</summary>
@@ -42,4 +45,7 @@ public enum DiffKind
 
     /// <summary>A skill was marked for visual emphasis.</summary>
     SkillEmphasized,
+
+    /// <summary>Job-description keywords already evidenced by the knowledge base were woven into a bullet.</summary>
+    KeywordsInjected,
 }

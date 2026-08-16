@@ -25,6 +25,7 @@ public sealed class SkillTaxonomy : ISkillTaxonomy
     private readonly FrozenDictionary<string, string> _aliasToCanonical;
     private readonly FrozenDictionary<string, string> _canonicalToCategory;
     private readonly FrozenDictionary<string, IReadOnlyList<string>> _canonicalToAliases;
+    private readonly FrozenDictionary<string, string> _canonicalToDisplay;
     private readonly FrozenSet<string> _allCanonical;
 
     /// <summary>Loads and parses the embedded taxonomy document immediately.</summary>
@@ -35,6 +36,7 @@ public sealed class SkillTaxonomy : ISkillTaxonomy
         var aliasToCanonical = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var canonicalToCategory = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var canonicalToAliases = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var canonicalToDisplay = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var allCanonical = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var category in document.Categories)
@@ -49,6 +51,7 @@ public sealed class SkillTaxonomy : ISkillTaxonomy
                 allCanonical.Add(entry.Canonical);
                 canonicalToCategory[entry.Canonical] = category.Id;
                 canonicalToAliases[entry.Canonical] = [.. entry.Aliases];
+                canonicalToDisplay[entry.Canonical] = entry.Display is { Length: > 0 } display ? display : entry.Canonical;
 
                 aliasToCanonical.TryAdd(SkillNormalizer.Normalize(entry.Canonical), entry.Canonical);
 
@@ -66,6 +69,7 @@ public sealed class SkillTaxonomy : ISkillTaxonomy
         _aliasToCanonical = aliasToCanonical.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
         _canonicalToCategory = canonicalToCategory.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
         _canonicalToAliases = canonicalToAliases.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+        _canonicalToDisplay = canonicalToDisplay.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
         _allCanonical = allCanonical.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -102,6 +106,14 @@ public sealed class SkillTaxonomy : ISkillTaxonomy
         ArgumentNullException.ThrowIfNull(canonical);
 
         return _canonicalToCategory.TryGetValue(canonical, out var category) ? category : OtherCategory;
+    }
+
+    /// <inheritdoc />
+    public string DisplayNameOf(string canonical)
+    {
+        ArgumentNullException.ThrowIfNull(canonical);
+
+        return _canonicalToDisplay.TryGetValue(canonical, out var display) ? display : canonical;
     }
 
     private static SkillsTaxonomyDocument LoadDocument()

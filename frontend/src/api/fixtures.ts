@@ -464,6 +464,13 @@ export const fixtureCommands: TailorCommand[] = [
     rationale: 'Leads with distributed systems and event-driven, the two mandatory requirements',
   },
   { op: 'emphasizeSkills', skills: ['csharp', 'kubernetes', 'postgresql'], rationale: 'Matches the three mandatory skill requirements' },
+  {
+    op: 'injectKeywords',
+    target: 'exp:acme-corp#1',
+    keywords: ['kubernetes', 'distributed systems'],
+    text: 'Led migration of 40+ services from .NET 6 to .NET 8 on a Kubernetes-based distributed systems platform, retiring 12k lines of shim code.',
+    rationale: "Surfaces two mandatory keywords already evidenced by this entry's tech and tags",
+  },
 ];
 
 export const fixtureRejectedCommands: TailoringResult['commands']['rejected'] = [
@@ -481,6 +488,17 @@ export const fixtureRejectedCommands: TailoringResult['commands']['rejected'] = 
     command: { op: 'include', targets: ['exp:ghost-employer#0'], rationale: 'Fill out timeline' },
     reason: 'Target "exp:ghost-employer#0" does not resolve to any node in the document.',
     code: 'unknown-target',
+  },
+  {
+    command: {
+      op: 'injectKeywords',
+      target: 'exp:nimbus-systems#0',
+      keywords: ['rust'],
+      text: 'Designed an event-sourced billing pipeline in Rust processing 2M events/day with exactly-once semantics.',
+      rationale: 'Requirement lists Rust as a nice-to-have',
+    },
+    reason: 'Keyword "rust" is not evidenced anywhere in the knowledge base — no entry, bullet, or skill group supports it.',
+    code: 'unsupported-keyword',
   },
 ];
 
@@ -514,6 +532,14 @@ export const fixtureDiff: ResumeDiffEntry[] = [
     entityId: 'skl:languages#csharp',
     kind: 'skillEmphasized',
     rationale: 'Matches the three mandatory skill requirements',
+  },
+  {
+    entityId: 'exp:acme-corp#1',
+    kind: 'keywordsInjected',
+    before: 'Led migration of 40+ services from .NET 6 to .NET 8, retiring 12k lines of shim code.',
+    after: 'Led migration of 40+ services from .NET 6 to .NET 8 on a Kubernetes-based distributed systems platform, retiring 12k lines of shim code.',
+    keywords: ['kubernetes', 'distributed systems'],
+    rationale: "Surfaces two mandatory keywords already evidenced by this entry's tech and tags",
   },
 ];
 

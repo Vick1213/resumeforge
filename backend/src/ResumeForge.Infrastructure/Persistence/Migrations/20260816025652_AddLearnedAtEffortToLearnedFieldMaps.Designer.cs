@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ResumeForge.Infrastructure.Persistence;
 
@@ -10,9 +11,11 @@ using ResumeForge.Infrastructure.Persistence;
 namespace ResumeForge.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(ResumeForgeDbContext))]
-    partial class ResumeForgeDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260816025652_AddLearnedAtEffortToLearnedFieldMaps")]
+    partial class AddLearnedAtEffortToLearnedFieldMaps
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");

@@ -17,6 +17,7 @@ namespace ResumeForge.Application.Tailoring;
 [JsonDerivedType(typeof(SetSummaryCommand), "setSummary")]
 [JsonDerivedType(typeof(EmphasizeSkillsCommand), "emphasizeSkills")]
 [JsonDerivedType(typeof(SetSectionOrderCommand), "setSectionOrder")]
+[JsonDerivedType(typeof(InjectKeywordsCommand), "injectKeywords")]
 public abstract record TailorCommand
 {
     /// <summary>One short clause explaining the command, shown in the diff UI.</summary>
@@ -96,4 +97,23 @@ public sealed record SetSectionOrderCommand : TailorCommand
 {
     /// <summary>The new section order.</summary>
     public required IReadOnlyList<SectionKind> Order { get; init; }
+}
+
+/// <summary>
+/// Weaves job-description keywords into an existing bullet for keyword-matching systems.
+/// Only available at <see cref="ModelEffort.Thorough"/> effort and above, and only for
+/// keywords the knowledge base already evidences — see <see cref="CommandValidator"/>'s
+/// rule 6. This is the honest form of ATS keyword optimization: it surfaces terms the
+/// candidate can actually support and refuses the rest, never relaxing at any effort level.
+/// </summary>
+public sealed record InjectKeywordsCommand : TailorCommand
+{
+    /// <summary>The bullet id to rewrite.</summary>
+    public required string Target { get; init; }
+
+    /// <summary>Normalized keyword names woven into <see cref="Text"/>.</summary>
+    public required IReadOnlyList<string> Keywords { get; init; }
+
+    /// <summary>The rewritten bullet text.</summary>
+    public required string Text { get; init; }
 }

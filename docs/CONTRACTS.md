@@ -372,6 +372,7 @@ Polymorphic JSON with discriminator `"op"`:
 [JsonDerivedType(typeof(SetSummaryCommand),     "setSummary")]
 [JsonDerivedType(typeof(EmphasizeSkillsCommand),"emphasizeSkills")]
 [JsonDerivedType(typeof(SetSectionOrderCommand),"setSectionOrder")]
+[JsonDerivedType(typeof(InjectKeywordsCommand), "injectKeywords")]
 public abstract record TailorCommand
 {
     public string? Rationale { get; init; }   // one short clause, shown in the diff UI
@@ -415,6 +416,17 @@ public sealed record EmphasizeSkillsCommand : TailorCommand
 
 public sealed record SetSectionOrderCommand : TailorCommand
 { public required IReadOnlyList<SectionKind> Order { get; init; } }
+
+// Weave job-description keywords into an existing bullet for keyword-matching systems.
+// Only available at Thorough effort and above, and only for keywords the knowledge base
+// already evidences — see validation rule 6. This is the honest form of ATS keyword
+// optimization: it surfaces terms the person can actually support, and refuses the rest.
+public sealed record InjectKeywordsCommand : TailorCommand
+{
+    public required string Target { get; init; }                    // "exp:acme-corp#2"
+    public required IReadOnlyList<string> Keywords { get; init; }   // normalized names
+    public required string Text { get; init; }                      // rewritten bullet
+}
 ```
 
 ### Include/exclude semantics
@@ -448,8 +460,16 @@ reported, never silently dropped:
    number or proper noun with the original bullet when the original contained one —
    this is the **anti-fabrication check**: the model may re-angle a bullet but may not
    invent metrics. Implemented as `IFabricationGuard`.
-4. Total `RewriteCommand` count ≤ `TailorOptions.MaxRewrites` (default 6).
+4. Total `RewriteCommand` count ≤ `TailorOptions.MaxRewrites`, which is derived from
+   effort — see below.
 5. `OrderCommand.Order` contains no duplicates.
+6. `InjectKeywordsCommand` passes rule 3's fabrication guard **and** every keyword it
+   names is already evidenced somewhere in the knowledge base — in a skill group, or in
+   the text of some entry or bullet. A keyword the person cannot support is rejected
+   with code `unsupported-keyword`, never injected. This rule is what separates keyword
+   optimization from lying on a resume, and it is not negotiable at any effort level.
+   The command is additionally rejected with `op-unavailable-at-effort` when the run's
+   effort is below `Thorough`.
 
 ```csharp
 public sealed record CommandValidationResult
@@ -465,6 +485,42 @@ public sealed record RejectedCommand
     public required string Code { get; init; }   // "unknown-target", "fabricated-metric", ...
 }
 ```
+
+### Model effort — buying more decisions on purpose
+
+Bounded cost is the default, not a ceiling. `ModelEffort` lets the user spend more
+deliberately, and it scales the number of *decisions* the model makes — never the amount
+of already-written text it restates. The cost story survives because the mechanism is
+unchanged: more effort means more commands, not a longer document echoed back.
+
+```csharp
+public enum ModelEffort { Minimal, Standard, Thorough, Maximum }
+```
+
+| Effort | `MaxRewrites` | Ops additionally enabled | Typical output tokens |
+| --- | --- | --- | --- |
+| `Minimal` | 0 | — (selection and ordering only) | ~200 |
+| `Standard` | 6 | `rewrite`, `setSummary` | ~600 |
+| `Thorough` | 12 | + `injectKeywords` | ~1,200 |
+| `Maximum` | 20 | + `setSummary` regenerated per run | ~2,000 |
+
+`Standard` is the default and is what every existing behaviour maps to, so effort is
+purely additive — an omitted `Effort` must produce byte-identical output to before this
+was introduced.
+
+Two rules that hold at **every** level, including `Maximum`:
+
+- The fabrication guard is never relaxed. Higher effort buys more rewriting, never
+  permission to invent a metric, an employer, or a date.
+- `selectVariant` is still preferred over `rewrite` wherever a suitable KB variant
+  exists. Effort raises the cap on rewrites; it does not make rewriting the goal.
+
+`MaxRewrites` remains individually overridable on the request. When both are supplied the
+explicit value wins, so effort is a preset rather than a lock.
+
+Estimated token cost per level must be shown in the UI beside the control. A user
+choosing to spend more is entitled to know roughly what they are buying before they
+click, and the figures above are the contract for that display.
 
 ### Tailoring result
 
@@ -486,9 +542,17 @@ public sealed record ResumeDiffEntry
     public string? Before { get; init; }
     public string? After { get; init; }
     public string? Rationale { get; init; }
+
+    // Populated only when Kind == KeywordsInjected: the keywords that were woven in.
+    public IReadOnlyList<string> Keywords { get; init; } = [];
 }
 
-public enum DiffKind { Included, Excluded, Reordered, Rewritten, VariantSelected, SummarySet, SkillEmphasized }
+public enum DiffKind
+{
+    Included, Excluded, Reordered, Rewritten,
+    VariantSelected, SummarySet, SkillEmphasized,
+    KeywordsInjected,
+}
 
 public sealed record CoverageReport
 {
@@ -735,10 +799,14 @@ public sealed record TailorRequest
 {
     public required string JobId { get; init; }
     public string? BaseResumeId { get; init; }     // null → current base resume
-    public int MaxRewrites { get; init; } = 6;
+    public ModelEffort Effort { get; init; } = ModelEffort.Standard;
+    public int? MaxRewrites { get; init; }         // null → derived from Effort; set wins
     public bool DryRun { get; init; }              // validate + trace, don't persist
 }
 ```
+
+`Effort` serializes as the lowercase name (`minimal`, `standard`, `thorough`, `maximum`).
+Omitting it must reproduce the pre-effort behaviour exactly.
 
 CORS: allow `http://localhost:5173` (Vite dev) and `chrome-extension://*` for the
 autofill endpoints.
@@ -820,12 +888,53 @@ token-saving story:
 
 1. **Board adapter** (`extension/src/adapters/*.ts`) — declarative selector maps for
    Greenhouse, Lever, Ashby, Workday, SmartRecruiters. Zero model tokens.
-2. **Heuristic matcher** — label text, `name`/`id`/`autocomplete` attributes, placeholder,
-   and `aria-label` scored by normalized token overlap against the canonical key
-   synonym table. Zero model tokens. Accepts a match at confidence ≥ 0.72.
+2. **Heuristic matcher** — `Label`, `Name`, `Placeholder` and `AutoComplete` scored by
+   normalized token overlap against the canonical key synonym table. Zero model tokens.
+   Accepts a match at confidence ≥ 0.72. (These four are exactly what `UnresolvedField`
+   carries; there is deliberately no DOM `id` or `aria-label` on the wire.)
 3. **Model fallback** — only fields still unresolved, batched into **one** request via
    `POST /api/autofill/resolve`. The response is persisted as a `LearnedFieldMap` keyed by
    `(host, formSignature)`, so the *same form on the next visit costs zero tokens*.
+
+`ModelEffort` tunes where the boundary between tiers 2 and 3 sits. Raising effort raises
+the heuristic's accept threshold, so the matcher keeps only what it is confident about
+and hands more of the form to the model.
+
+Ownership is split, and the split matters: **the tier-2 threshold is enforced entirely
+in the extension**, because tier 2 runs in the browser and the backend never sees a
+field the matcher resolved. `ResolveFieldsRequest.Effort` therefore governs only what
+tier 3 does with the fields it is given. Both sides read the same table:
+
+| Effort | Tier-2 accept threshold | Tier 3 additionally handles |
+| --- | --- | --- |
+| `Minimal` | 0.60 | — |
+| `Standard` | 0.72 | select/radio option choice |
+| `Thorough` | 0.80 | + free-text answers for open questions |
+| `Maximum` | 0.88 | + free-text answers, longer budget per answer |
+
+Free-text answers (`Thorough` and above) fill the "describe a project" boxes that
+otherwise get left blank. They are subject to the same fabrication rule as resume
+bullets: an answer may only assert what the knowledge base supports.
+
+They are grounded in the **knowledge base only**. `ResolveFieldsRequest` deliberately
+carries no reference to a job posting — the extension resolves fields on whatever page
+the user is on, which is not necessarily a posting ResumeForge has ever seen. That bounds
+what this can answer honestly: "describe a project you are proud of" works, "why do you
+want to work *here*" does not, and the model must decline the latter rather than invent
+enthusiasm about a company it knows nothing about. Grounding answers in a posting would
+require threading a job reference through the autofill request, which is a contract
+change, not an implementation detail.
+
+`FieldResolution.OptionValue` carries the value to fill in both cases: the chosen option
+for a select or radio, and the drafted text for a free-text field. The name is narrower
+than its use — kept deliberately rather than renamed, because the extension already
+distinguishes the two by the field's `InputType`, and a rename would churn three
+components for no behavioural gain.
+
+A learned field map records the effort it was produced at. A map learned at a lower
+effort is still a valid cache hit — the point of the cascade is that resolution, once
+learned, is free — but re-running a form at higher effort must be able to resolve fields
+the earlier pass left unmapped rather than treating the cached map as complete.
 
 ```csharp
 public sealed record ResolveFieldsRequest
@@ -833,6 +942,7 @@ public sealed record ResolveFieldsRequest
     public required string Host { get; init; }             // "boards.greenhouse.io"
     public required string FormSignature { get; init; }    // stable hash of the field set
     public required IReadOnlyList<UnresolvedField> Fields { get; init; }
+    public ModelEffort Effort { get; init; } = ModelEffort.Standard;
 }
 
 public sealed record UnresolvedField
@@ -866,6 +976,7 @@ public sealed record LearnedFieldMap
     public required string FormSignature { get; init; }
     public required IReadOnlyDictionary<string, string> ElementToKey { get; init; }
     public required DateTimeOffset LearnedAt { get; init; }
+    public ModelEffort LearnedAtEffort { get; init; } = ModelEffort.Standard;
     public int HitCount { get; init; }
 }
 ```

@@ -17,4 +17,14 @@ public sealed record TailorOptions
 
     /// <summary>Maximum number of scored candidates per section offered to the model.</summary>
     public int CandidateLimit { get; init; } = 40;
+
+    /// <summary>
+    /// The effort level this run was configured for (CONTRACTS.md §6). Governs which
+    /// additional ops are available — currently just <c>injectKeywords</c>, gated at
+    /// <see cref="ModelEffort.Thorough"/> and above by <see cref="CommandValidator"/>.
+    /// <see cref="MaxRewrites"/> is ordinarily derived from this via
+    /// <see cref="ModelEffortExtensions.ResolveMaxRewrites"/>, but stays independently
+    /// settable here since an explicit override always wins.
+    /// </summary>
+    public ModelEffort Effort { get; init; } = ModelEffort.Standard;
 }

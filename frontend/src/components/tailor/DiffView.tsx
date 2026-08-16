@@ -11,6 +11,7 @@ const KIND_TONE: Record<DiffKind, BadgeTone> = {
   variantSelected: 'accent',
   summarySet: 'accent',
   skillEmphasized: 'info',
+  keywordsInjected: 'info',
 };
 
 export interface DiffViewProps {
@@ -33,21 +34,38 @@ export function DiffView({ diff }: DiffViewProps) {
             <Badge tone={KIND_TONE[group.kind]}>{group.entries.length}</Badge>
           </h3>
           <ul className="flex flex-col gap-2">
-            {group.entries.map((entry, index) => (
-              <li
-                key={`${entry.entityId}-${index}`}
-                className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] p-3"
-              >
-                <p className="font-mono text-xs text-[var(--text-faint)]">{entry.entityId}</p>
-                {entry.before && (
-                  <p className="mt-1.5 text-sm text-[var(--text-faint)] line-through decoration-[var(--danger)]">
-                    {entry.before}
-                  </p>
-                )}
-                {entry.after && <p className="mt-1 text-sm text-[var(--text)]">{entry.after}</p>}
-                {entry.rationale && <p className="mt-1.5 text-xs italic text-[var(--text-muted)]">{entry.rationale}</p>}
-              </li>
-            ))}
+            {group.entries.map((entry, index) => {
+              const isKeywordInjection = entry.kind === 'keywordsInjected';
+              return (
+                <li
+                  key={`${entry.entityId}-${index}`}
+                  className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-elevated)] p-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-mono text-xs text-[var(--text-faint)]">{entry.entityId}</p>
+                    {isKeywordInjection && <Badge tone="info">Keywords woven in</Badge>}
+                  </div>
+                  {entry.before && (
+                    <p className="mt-1.5 text-sm text-[var(--text-faint)] line-through decoration-[var(--danger)]">
+                      {entry.before}
+                    </p>
+                  )}
+                  {entry.after && <p className="mt-1 text-sm text-[var(--text)]">{entry.after}</p>}
+                  {isKeywordInjection && entry.keywords && entry.keywords.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {entry.keywords.map((keyword) => (
+                        <Badge key={keyword} tone="accent">
+                          {keyword}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  {entry.rationale && (
+                    <p className="mt-1.5 text-xs italic text-[var(--text-muted)]">{entry.rationale}</p>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </section>
       ))}

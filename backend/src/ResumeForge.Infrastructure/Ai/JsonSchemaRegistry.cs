@@ -148,6 +148,19 @@ public sealed class JsonSchemaRegistry
                     },
                     "required": ["op", "order"],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "description": "Only available at Thorough effort and above, and only for keywords the knowledge base already evidences.",
+                    "properties": {
+                      "op": { "const": "injectKeywords" },
+                      "target": { "type": "string" },
+                      "keywords": { "type": "array", "items": { "type": "string" } },
+                      "text": { "type": "string", "maxLength": 300 },
+                      "rationale": { "type": ["string", "null"] }
+                    },
+                    "required": ["op", "target", "keywords", "text"],
+                    "additionalProperties": false
                   }
                 ]
               }

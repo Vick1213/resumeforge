@@ -1,10 +1,11 @@
 using ResumeForge.Domain.Ids;
 using ResumeForge.Domain.Resume;
+using ResumeForge.Domain.Text;
 
 namespace ResumeForge.Application.Tailoring;
 
 /// <summary>
-/// Deterministic <see cref="ICommandValidator"/> implementing the five validation rules
+/// Deterministic <see cref="ICommandValidator"/> implementing the six validation rules
 /// from CONTRACTS.md §6:
 /// <list type="number">
 /// <item>Every target/parent/order entry resolves to an existing node (the literal
@@ -14,6 +15,11 @@ namespace ResumeForge.Application.Tailoring;
 /// <see cref="IFabricationGuard"/>.</item>
 /// <item>Total accepted <see cref="RewriteCommand"/>s does not exceed <see cref="TailorOptions.MaxRewrites"/>.</item>
 /// <item><see cref="OrderCommand.Order"/> contains no duplicates.</item>
+/// <item><see cref="InjectKeywordsCommand"/> passes rule 3's fabrication guard and every
+/// keyword it names is already evidenced in a skill group or in the text of some entry or
+/// bullet (code <c>unsupported-keyword</c> otherwise); it is additionally rejected with
+/// <c>op-unavailable-at-effort</c> below <see cref="ModelEffort.Thorough"/>. This rule
+/// never relaxes at any effort level.</item>
 /// </list>
 /// </summary>
 public sealed class CommandValidator(IFabricationGuard fabricationGuard) : ICommandValidator
@@ -32,7 +38,7 @@ public sealed class CommandValidator(IFabricationGuard fabricationGuard) : IComm
 
         foreach (var command in commands)
         {
-            if (TryGetRejection(command, document, out var rejection))
+            if (TryGetRejection(command, document, options, out var rejection))
             {
                 rejected.Add(rejection);
             }
@@ -87,7 +93,7 @@ public sealed class CommandValidator(IFabricationGuard fabricationGuard) : IComm
         accepted.AddRange(kept);
     }
 
-    private bool TryGetRejection(TailorCommand command, ResumeDocument document, out RejectedCommand rejection)
+    private bool TryGetRejection(TailorCommand command, ResumeDocument document, TailorOptions options, out RejectedCommand rejection)
     {
         switch (command)
         {
@@ -185,6 +191,42 @@ public sealed class CommandValidator(IFabricationGuard fabricationGuard) : IComm
 
                 break;
 
+            case InjectKeywordsCommand inject:
+                if (!EntityId.TryParse(inject.Target, out var injId) || !document.TryFindBullet(injId, out var injBullet))
+                {
+                    rejection = Reject(command, $"'{inject.Target}' does not resolve to a bullet in the document.", "unknown-target");
+                    return true;
+                }
+
+                // Not negotiable at any effort level (CONTRACTS.md §6): this reuses rule 3's
+                // fabrication guard exactly as RewriteCommand does, since inject.Text is a
+                // full replacement bullet just like a rewrite's.
+                if (!fabricationGuard.IsSafe(injBullet.Text, inject.Text, out var injFabricationReason))
+                {
+                    rejection = Reject(command, injFabricationReason ?? "InjectKeywords failed the anti-fabrication check.", "fabricated-metric");
+                    return true;
+                }
+
+                if (TryFindUnsupportedKeyword(inject.Keywords, document, out var unsupportedKeyword))
+                {
+                    rejection = Reject(
+                        command,
+                        $"'{unsupportedKeyword}' is not evidenced anywhere in the knowledge base — not in a skill group, and not in the text of any entry or bullet.",
+                        "unsupported-keyword");
+                    return true;
+                }
+
+                if (options.Effort < ModelEffort.Thorough)
+                {
+                    rejection = Reject(
+                        command,
+                        $"injectKeywords requires at least Thorough effort; this run is {options.Effort}.",
+                        "op-unavailable-at-effort");
+                    return true;
+                }
+
+                break;
+
             case SetSummaryCommand:
             case EmphasizeSkillsCommand:
             case SetSectionOrderCommand:
@@ -195,6 +237,127 @@ public sealed class CommandValidator(IFabricationGuard fabricationGuard) : IComm
         rejection = null!;
         return false;
     }
+
+    /// <summary>
+    /// Rule 6's KB-evidence check. A keyword is evidenced when some skill in some skill
+    /// group normalizes to it exactly, or when it appears — after the same punctuation- and
+    /// whitespace-stripping normalization <see cref="SkillNormalizer"/> uses everywhere else
+    /// in the system — as a substring of the text of some entry (role, organization, project
+    /// name/tagline, institution, credential, certification name/issuer) or some bullet
+    /// (including its variants). <paramref name="document"/> is the freshly built base
+    /// resume, which — before any command has executed — is a complete, unfiltered
+    /// projection of the knowledge base, so searching it is equivalent to searching the KB
+    /// itself.
+    /// </summary>
+    private static bool TryFindUnsupportedKeyword(IReadOnlyList<string> keywords, ResumeDocument document, out string? unsupported)
+    {
+        foreach (var keyword in keywords)
+        {
+            if (!IsKeywordEvidenced(keyword, document))
+            {
+                unsupported = keyword;
+                return true;
+            }
+        }
+
+        unsupported = null;
+        return false;
+    }
+
+    private static bool IsKeywordEvidenced(string keyword, ResumeDocument document)
+    {
+        if (string.IsNullOrWhiteSpace(keyword))
+        {
+            return false;
+        }
+
+        foreach (var group in document.Skills)
+        {
+            foreach (var skill in group.Items)
+            {
+                if (string.Equals(skill.Normalized, keyword, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+        }
+
+        foreach (var entry in document.Experience)
+        {
+            if (TextEvidences(entry.Role, keyword) || TextEvidences(entry.Organization, keyword))
+            {
+                return true;
+            }
+
+            if (BulletsEvidence(entry.Bullets, keyword))
+            {
+                return true;
+            }
+        }
+
+        foreach (var entry in document.Projects)
+        {
+            if (TextEvidences(entry.Name, keyword) || TextEvidences(entry.Tagline, keyword))
+            {
+                return true;
+            }
+
+            if (BulletsEvidence(entry.Bullets, keyword))
+            {
+                return true;
+            }
+        }
+
+        foreach (var entry in document.Education)
+        {
+            if (TextEvidences(entry.Institution, keyword) || TextEvidences(entry.Credential, keyword))
+            {
+                return true;
+            }
+
+            foreach (var highlight in entry.Highlights)
+            {
+                if (TextEvidences(highlight, keyword))
+                {
+                    return true;
+                }
+            }
+        }
+
+        foreach (var entry in document.Certifications)
+        {
+            if (TextEvidences(entry.Name, keyword) || TextEvidences(entry.Issuer, keyword))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool BulletsEvidence(IReadOnlyList<Bullet> bullets, string keyword)
+    {
+        foreach (var bullet in bullets)
+        {
+            if (TextEvidences(bullet.Text, keyword))
+            {
+                return true;
+            }
+
+            foreach (var variant in bullet.Variants)
+            {
+                if (TextEvidences(variant, keyword))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TextEvidences(string? text, string normalizedKeyword) =>
+        !string.IsNullOrWhiteSpace(text) && SkillNormalizer.Normalize(text).Contains(normalizedKeyword, StringComparison.Ordinal);
 
     private static RejectedCommand Reject(TailorCommand command, string reason, string code) =>
         new() { Command = command, Reason = reason, Code = code };

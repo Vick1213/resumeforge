@@ -1,4 +1,4 @@
-import type { AutofillProfile, CanonicalKey, ResolutionTier, UnresolvedField } from './contracts';
+import type { AutofillProfile, CanonicalKey, ModelEffort, ResolutionTier, UnresolvedField } from './contracts';
 
 /**
  * Runtime message protocol between the content script, the popup, and the
@@ -20,6 +20,7 @@ export interface ResolveUnresolvedFieldsRequest {
   host: string;
   formSignature: string;
   fields: UnresolvedField[];
+  effort: ModelEffort;
 }
 
 export interface ResolveUnresolvedFieldsResponse {

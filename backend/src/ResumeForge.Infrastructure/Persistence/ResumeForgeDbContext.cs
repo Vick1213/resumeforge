@@ -97,6 +97,7 @@ public sealed class ResumeForgeDbContext(DbContextOptions<ResumeForgeDbContext> 
         {
             entity.HasKey(e => new { e.Host, e.FormSignature });
             ConfigureJsonDictionary<string, string>(entity.Property(e => e.ElementToKey));
+            entity.Property(e => e.LearnedAtEffort).HasConversion<string>();
         });
 
         modelBuilder.Entity<ApplicationEntity>(entity =>

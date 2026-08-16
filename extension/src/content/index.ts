@@ -3,6 +3,7 @@ import type { FieldSelector, FileFieldSelector } from '../adapters';
 import type { AutofillProfile, CanonicalKey, ResolutionTier, UnresolvedField } from '../contracts';
 import { resolveByHeuristic } from '../heuristics/matcher';
 import { escapeAttributeValue } from '../lib/cssEscape';
+import { getSettings } from '../lib/settings';
 import type {
   BackgroundResponse,
   ContentRequest,
@@ -47,6 +48,7 @@ async function buildFillPlan(): Promise<{
   const descriptors = scanPage(document);
   const formSignature = computeFormSignature(descriptors);
   const host = window.location.hostname;
+  const settings = await getSettings();
 
   const resolved = new Map<string, { key: CanonicalKey; tier: ResolutionTier; confidence: number }>();
 
@@ -65,9 +67,11 @@ async function buildFillPlan(): Promise<{
     }
   }
 
-  // Tier 2 — heuristic matcher. Zero tokens.
+  // Tier 2 — heuristic matcher. Zero tokens. Higher effort raises the accept
+  // threshold, so this tier keeps only what it's confident about and defers
+  // more fields to tier 3.
   const afterAdapter = descriptors.filter((d) => !resolved.has(d.elementId));
-  const heuristicMatches = resolveByHeuristic(afterAdapter);
+  const heuristicMatches = resolveByHeuristic(afterAdapter, settings.effort);
   for (const [elementId, match] of heuristicMatches) {
     resolved.set(elementId, { key: match.key, tier: 'heuristic', confidence: match.confidence });
   }
@@ -81,7 +85,8 @@ async function buildFillPlan(): Promise<{
         type: 'resolve-unresolved-fields',
         host,
         formSignature,
-        fields: stillUnresolved.map(toUnresolvedField)
+        fields: stillUnresolved.map(toUnresolvedField),
+        effort: settings.effort
       });
       for (const resolution of response.resolutions as FieldTierResolution[]) {
         if (resolution.canonicalKey) {

@@ -23,7 +23,8 @@ public sealed class CommandValidatorTests
         return TestData.Document(experience: [entry], skills: [group]);
     }
 
-    private static TailorOptions Options(int maxRewrites = 6) => new() { MaxRewrites = maxRewrites };
+    private static TailorOptions Options(int maxRewrites = 6, ModelEffort effort = ModelEffort.Standard) =>
+        new() { MaxRewrites = maxRewrites, Effort = effort };
 
     [Fact]
     public void Valid_include_command_is_accepted()
@@ -218,6 +219,106 @@ public sealed class CommandValidatorTests
         new EmphasizeSkillsCommand { Skills = ["csharp"] },
         new SetSectionOrderCommand { Order = [SectionKind.Summary, SectionKind.Experience] },
     };
+
+    [Fact]
+    public void InjectKeywords_with_an_evidenced_keyword_at_thorough_effort_is_accepted()
+    {
+        var doc = NewDocument();
+        // "csharp" is evidenced by the skl:languages#csharp skill in the fixture document.
+        var command = new InjectKeywordsCommand
+        {
+            Target = "exp:acme#1",
+            Keywords = ["csharp"],
+            Text = "Led migration of 40 services to .NET 8, written in C#.",
+        };
+
+        var result = _validator.Validate([command], doc, Options(effort: ModelEffort.Thorough));
+
+        result.Accepted.ShouldBe([command]);
+        result.Rejected.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void InjectKeywords_evidenced_only_by_bullet_text_at_thorough_effort_is_accepted()
+    {
+        var doc = NewDocument();
+        // "latency" appears nowhere as a skill, only inside exp:acme#0's own bullet text —
+        // still evidence per rule 6 ("...or in the text of some entry or bullet"). The
+        // injection targets exp:acme#1 (a different bullet) and introduces no digit-bearing
+        // token beyond what exp:acme#1 already had, so it also clears rule 3's guard.
+        var command = new InjectKeywordsCommand
+        {
+            Target = "exp:acme#1",
+            Keywords = ["latency"],
+            Text = "Led migration of 40 services to .NET 8, tracking latency along the way.",
+        };
+
+        var result = _validator.Validate([command], doc, Options(effort: ModelEffort.Thorough));
+
+        result.Accepted.ShouldBe([command]);
+    }
+
+    [Fact]
+    public void InjectKeywords_below_thorough_effort_is_rejected_with_op_unavailable_at_effort_code()
+    {
+        var doc = NewDocument();
+        var command = new InjectKeywordsCommand
+        {
+            Target = "exp:acme#1",
+            Keywords = ["csharp"],
+            Text = "Led migration of 40 services to .NET 8, written in C#.",
+        };
+
+        var result = _validator.Validate([command], doc, Options(effort: ModelEffort.Standard));
+
+        result.Rejected.Single().Code.ShouldBe("op-unavailable-at-effort");
+    }
+
+    [Fact]
+    public void InjectKeywords_naming_a_keyword_absent_from_the_kb_is_rejected_even_at_maximum_effort()
+    {
+        // The line this rule exists to hold: keyword optimization must never become
+        // fabrication, and that guarantee does not relax at the highest effort level.
+        var doc = NewDocument();
+        var command = new InjectKeywordsCommand
+        {
+            Target = "exp:acme#1",
+            Keywords = ["kubernetes"],
+            Text = "Led migration of 40 services to .NET 8, orchestrated with Kubernetes.",
+        };
+
+        var result = _validator.Validate([command], doc, Options(effort: ModelEffort.Maximum));
+
+        result.Accepted.ShouldBeEmpty();
+        result.Rejected.Single().Code.ShouldBe("unsupported-keyword");
+    }
+
+    [Fact]
+    public void InjectKeywords_with_an_unresolvable_target_is_rejected_with_unknown_target_code()
+    {
+        var doc = NewDocument();
+        var command = new InjectKeywordsCommand { Target = "exp:acme#99", Keywords = ["csharp"], Text = "Whatever." };
+
+        var result = _validator.Validate([command], doc, Options(effort: ModelEffort.Thorough));
+
+        result.Rejected.Single().Code.ShouldBe("unknown-target");
+    }
+
+    [Fact]
+    public void InjectKeywords_that_fabricates_a_metric_is_rejected_with_fabricated_metric_code()
+    {
+        var doc = NewDocument();
+        var command = new InjectKeywordsCommand
+        {
+            Target = "exp:acme#1",
+            Keywords = ["csharp"],
+            Text = "Reduced infrastructure costs by 60% using C#.",
+        };
+
+        var result = _validator.Validate([command], doc, Options(effort: ModelEffort.Thorough));
+
+        result.Rejected.Single().Code.ShouldBe("fabricated-metric");
+    }
 
     [Fact]
     public void A_batch_of_entirely_valid_commands_is_fully_accepted()

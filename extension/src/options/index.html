@@ -44,7 +44,7 @@
         color: #55585f;
         margin-bottom: 6px;
       }
-      input[type="url"], input[type="text"] {
+      input[type="url"], input[type="text"], select {
         width: 100%;
         box-sizing: border-box;
         padding: 8px 10px;
@@ -52,6 +52,19 @@
         border-radius: 6px;
         font-size: 13px;
         margin-bottom: 16px;
+        font-family: inherit;
+        background: #fff;
+      }
+      .effort-row {
+        margin-bottom: 16px;
+      }
+      .effort-row select {
+        margin-bottom: 6px;
+      }
+      .effort-description {
+        color: #55585f;
+        font-size: 12px;
+        margin: 0;
       }
       .toggle-row {
         display: flex;
@@ -152,6 +165,17 @@
                 same form costs zero tokens on your next visit.</span
               >
             </label>
+          </div>
+
+          <div class="effort-row">
+            <label class="field" for="effort-select">Model effort <span class="token-badge">spends tokens</span></label>
+            <select id="effort-select" name="effort">
+              <option value="minimal">Minimal — cheapest, least of the form goes to the model</option>
+              <option value="standard">Standard — default</option>
+              <option value="thorough">Thorough — model also drafts free-text answers</option>
+              <option value="maximum">Maximum — most tokens, longest free-text answers</option>
+            </select>
+            <p id="effort-description" class="effort-description"></p>
           </div>
 
           <button type="submit">Save</button>

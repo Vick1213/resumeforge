@@ -86,6 +86,61 @@ public sealed class TailorEndpointsTests(ResumeForgeApiFactory factory)
     }
 
     [Fact]
+    public async Task Omitted_effort_and_explicit_standard_effort_produce_byte_identical_document_and_diff()
+    {
+        // The single most important invariant of the effort feature (CONTRACTS.md §6):
+        // effort is purely additive, so a request that never mentions "effort" at all — the
+        // exact shape every pre-effort client still sends — must behave identically to one
+        // that names Standard explicitly. Both requests leave BaseResumeId null (current
+        // base resume) and DryRun keeps each run side-effect-free so calling it twice is
+        // safe; ResumeBuilder assigns a fresh id to each un-persisted build regardless of
+        // effort, so Document.Id is excluded from the comparison below alongside the
+        // timestamps, same as Id/CreatedAt/UpdatedAt would be for any two independent builds.
+        using var client = factory.CreateClient();
+        var jobId = await CreateJobAsync(client);
+
+        using var omittedResponse = await client.PostAsJsonAsync(
+            "/api/tailor",
+            new { jobId, dryRun = true },
+            TestJson.Options);
+        omittedResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var omitted = await omittedResponse.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+
+        using var standardResponse = await client.PostAsJsonAsync(
+            "/api/tailor",
+            new TailorRequest { JobId = jobId, Effort = ModelEffort.Standard, DryRun = true },
+            TestJson.Options);
+        standardResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var standard = await standardResponse.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+
+        omitted.ShouldNotBeNull();
+        standard.ShouldNotBeNull();
+
+        // Compared via a serialized projection rather than record equality: nested
+        // IReadOnlyList<T> properties (Commands.Accepted, Coverage.Requirements, ...) don't
+        // get structural equality from the generated record Equals, since two independently
+        // deserialized responses never share list instances. Trace/Usage are deliberately
+        // excluded — Trace carries real per-run elapsed time and both are unaffected by
+        // effort at Standard, so they're not part of this guarantee.
+        Project(omitted!).ShouldBe(Project(standard!));
+    }
+
+    // Id/CreatedAt/UpdatedAt come from a fresh ResumeBuilder.Build/TimeProvider.System call
+    // for each independent run and are not part of the effort guarantee — two calls a few
+    // milliseconds apart, or with no persisted base resume to share an id from, may
+    // legitimately differ there even though every field effort could possibly influence is
+    // identical.
+    private static string Project(TailoringResult result) => System.Text.Json.JsonSerializer.Serialize(
+        new
+        {
+            Document = result.Document with { Id = string.Empty, CreatedAt = default, UpdatedAt = default },
+            result.Diff,
+            result.Commands,
+            result.Coverage,
+        },
+        TestJson.Options);
+
+    [Fact]
     public async Task Tailor_for_unknown_job_returns_404()
     {
         using var client = factory.CreateClient();
@@ -106,9 +161,71 @@ public sealed class TailorEndpointsTests(ResumeForgeApiFactory factory)
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }
 
-    private static async Task<string> CreateJobAsync(HttpClient client)
+    [Fact]
+    public async Task Only_jd_matched_skills_are_emphasized_in_the_tailored_resume()
     {
-        using var response = await client.PostAsJsonAsync("/api/jobs", new CreateJobRequest { RawText = SamplePosting }, TestJson.Options);
+        // Regression for "emphasizeSkills bolds every skill": the fixture profile carries
+        // five skills (csharp, dotnet, postgresql, typescript, nodejs) across its one
+        // experience entry and one project. A JD that only asks for C# and PostgreSQL
+        // must emphasize exactly those — a skill absent from the JD (typescript here)
+        // must come back with Emphasized == false, not merely "fewer bold than before."
+        using var client = factory.CreateClient();
+
+        const string jdText =
+            "We need a backend engineer strong in C# and PostgreSQL. Requirements: production " +
+            "experience with C# and PostgreSQL.";
+        var jobId = await CreateJobAsync(client, jdText);
+
+        using var baseResponse = await client.PostAsync("/api/resumes/base", content: null);
+        (await baseResponse.Content.ReadFromJsonAsync<ResumeDocument>(TestJson.Options)).ShouldNotBeNull();
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor", new TailorRequest { JobId = jobId, DryRun = false }, TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+        result.ShouldNotBeNull();
+
+        var allSkills = result.Document.Skills.SelectMany(g => g.Items).ToList();
+        var csharp = allSkills.Single(s => s.Normalized == "csharp");
+        var typescript = allSkills.Single(s => s.Normalized == "typescript");
+
+        csharp.Emphasized.ShouldBeTrue();
+        typescript.Emphasized.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Tailored_resume_from_a_raw_text_job_gets_a_human_readable_name_with_no_guid()
+    {
+        // Regression: a raw-text job posting (as opposed to one fetched from a URL) never
+        // has Title/Company populated, so the naming fallback used to be
+        // "Tailored - {job.Id}" — a bare GUID in a user-visible resume name. It must now
+        // derive something readable from the posting's own text instead.
+        using var client = factory.CreateClient();
+
+        const string rawText = "Senior Backend Engineer at Nimbus Systems\n\nRequirements: 5+ years with C# and PostgreSQL.";
+        var jobId = await CreateJobAsync(client, rawText);
+
+        using var baseResponse = await client.PostAsync("/api/resumes/base", content: null);
+        (await baseResponse.Content.ReadFromJsonAsync<ResumeDocument>(TestJson.Options)).ShouldNotBeNull();
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor", new TailorRequest { JobId = jobId, DryRun = false }, TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+        result.ShouldNotBeNull();
+
+        result.Document.Name.ShouldBe("Senior Backend Engineer at Nimbus Systems");
+        result.Document.Name.ShouldNotContain(jobId);
+        Guid.TryParse(result.Document.Name, out _).ShouldBeFalse();
+    }
+
+    private static Task<string> CreateJobAsync(HttpClient client) => CreateJobAsync(client, SamplePosting);
+
+    private static async Task<string> CreateJobAsync(HttpClient client, string rawText)
+    {
+        using var response = await client.PostAsJsonAsync("/api/jobs", new CreateJobRequest { RawText = rawText }, TestJson.Options);
         var posting = await response.Content.ReadFromJsonAsync<JobPosting>(TestJson.Options);
         return posting!.Id;
     }

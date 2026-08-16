@@ -1,3 +1,5 @@
+using ResumeForge.Application.Tailoring;
+
 namespace ResumeForge.Application.Autofill;
 
 /// <summary>
@@ -19,6 +21,15 @@ public sealed record LearnedFieldMap
 
     /// <summary>When this mapping was learned.</summary>
     public required DateTimeOffset LearnedAt { get; init; }
+
+    /// <summary>
+    /// The effort the resolution run that produced this mapping was configured at
+    /// (CONTRACTS.md §10). A map learned at a lower effort is still a valid cache hit —
+    /// resolution, once learned, is free — but a caller re-resolving at a higher effort
+    /// should be able to fill in fields the earlier, lower-effort pass left unmapped rather
+    /// than treating this cached map as complete.
+    /// </summary>
+    public ModelEffort LearnedAtEffort { get; init; } = ModelEffort.Standard;
 
     /// <summary>How many times this mapping has been reused since being learned.</summary>
     public int HitCount { get; init; }

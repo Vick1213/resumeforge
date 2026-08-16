@@ -35,6 +35,7 @@ public sealed class LearnedFieldMapRepository(ResumeForgeDbContext dbContext) : 
                 FormSignature = map.FormSignature,
                 ElementToKey = new Dictionary<string, string>(map.ElementToKey, StringComparer.Ordinal),
                 LearnedAt = map.LearnedAt,
+                LearnedAtEffort = map.LearnedAtEffort,
                 HitCount = map.HitCount,
             });
         }
@@ -42,6 +43,7 @@ public sealed class LearnedFieldMapRepository(ResumeForgeDbContext dbContext) : 
         {
             existing.ElementToKey = new Dictionary<string, string>(map.ElementToKey, StringComparer.Ordinal);
             existing.LearnedAt = map.LearnedAt;
+            existing.LearnedAtEffort = map.LearnedAtEffort;
             existing.HitCount = map.HitCount;
         }
 
@@ -54,6 +56,7 @@ public sealed class LearnedFieldMapRepository(ResumeForgeDbContext dbContext) : 
         FormSignature = e.FormSignature,
         ElementToKey = e.ElementToKey,
         LearnedAt = e.LearnedAt,
+        LearnedAtEffort = e.LearnedAtEffort,
         HitCount = e.HitCount,
     };
 }

@@ -76,6 +76,24 @@ public sealed class SkillTaxonomyTests
         _taxonomy.AliasesFor("not-a-real-canonical-name").ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData("csharp", "C#")]
+    [InlineData("dotnet", ".NET")]
+    [InlineData("kubernetes", "Kubernetes")]
+    [InlineData("postgresql", "PostgreSQL")]
+    [InlineData("grpc", "gRPC")]
+    [InlineData("terraform", "Terraform")]
+    public void DisplayNameOf_returns_the_human_facing_spelling(string canonical, string expectedDisplay)
+    {
+        _taxonomy.DisplayNameOf(canonical).ShouldBe(expectedDisplay);
+    }
+
+    [Fact]
+    public void DisplayNameOf_falls_back_to_the_canonical_name_for_an_unrecognized_skill()
+    {
+        _taxonomy.DisplayNameOf("not-a-real-canonical-name").ShouldBe("not-a-real-canonical-name");
+    }
+
     [Fact]
     public void TryCanonicalize_is_safe_to_call_concurrently()
     {

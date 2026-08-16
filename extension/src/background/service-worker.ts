@@ -169,7 +169,8 @@ async function handleResolveUnresolvedFields(
     const response = await resolveViaModel(settings.backendBaseUrl, {
       host: message.host,
       formSignature: message.formSignature,
-      fields: stillUnresolved
+      fields: stillUnresolved,
+      effort: message.effort
     });
 
     const newlyResolved: Record<string, CanonicalKey> = {};
@@ -191,6 +192,7 @@ async function handleResolveUnresolvedFields(
         formSignature: message.formSignature,
         elementToKey: { ...(learnedMap?.elementToKey ?? {}), ...newlyResolved },
         learnedAt: new Date().toISOString(),
+        learnedAtEffort: message.effort,
         hitCount: (learnedMap?.hitCount ?? 0) + 1
       };
       await setCachedFieldMap(mergedMap);

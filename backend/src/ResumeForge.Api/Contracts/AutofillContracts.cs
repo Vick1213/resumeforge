@@ -1,3 +1,5 @@
+using ResumeForge.Application.Tailoring;
+
 namespace ResumeForge.Api.Contracts;
 
 /// <summary>
@@ -43,6 +45,16 @@ public sealed record ResolveFieldsRequest
 
     /// <summary>The fields the extension could not resolve on its own.</summary>
     public required IReadOnlyList<UnresolvedField> Fields { get; init; }
+
+    /// <summary>
+    /// How much decision-making budget tier 3 may spend the model on (CONTRACTS.md §10).
+    /// Governs tier-3 behaviour only — select/radio option choice at
+    /// <see cref="ModelEffort.Standard"/>, free-text answers for open questions at
+    /// <see cref="ModelEffort.Thorough"/> and above, a longer per-answer budget at
+    /// <see cref="ModelEffort.Maximum"/>. The tier-2 heuristic accept threshold is enforced
+    /// entirely in the extension and is not affected by this field.
+    /// </summary>
+    public ModelEffort Effort { get; init; } = ModelEffort.Standard;
 }
 
 /// <summary>A single form field the extension's client-side resolution could not confidently map.</summary>

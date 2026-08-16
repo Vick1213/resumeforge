@@ -2,6 +2,7 @@ using ResumeForge.Api.Contracts;
 using ResumeForge.Api.ExceptionHandling;
 using ResumeForge.Application.Abstractions;
 using ResumeForge.Application.Autofill;
+using ResumeForge.Application.Tailoring;
 using ResumeForge.Infrastructure.Ai;
 
 namespace ResumeForge.Api.Endpoints;
@@ -107,29 +108,102 @@ public static class AutofillEndpoints
         return TypedResults.Ok(new AutofillProfile { Fields = fields, Documents = documents });
     }
 
-    private static async Task<IResult> ResolveAsync(ResolveFieldsRequest request, ILanguageModel languageModel, CancellationToken ct)
+    private static async Task<IResult> ResolveAsync(
+        ResolveFieldsRequest request, ILanguageModel languageModel, IKnowledgeBaseReader knowledgeBaseReader, CancellationToken ct)
     {
         if (request.Fields.Count == 0)
         {
             return TypedResults.Ok(new ResolveFieldsResponse { Resolutions = [], Usage = TokenUsage.Empty });
         }
 
+        // Grounding material for free-text answers is only useful — and only worth reading
+        // — once the effort actually unlocks that tier-3 behaviour (CONTRACTS.md §10).
+        var profile = request.Effort >= ModelEffort.Thorough
+            ? await knowledgeBaseReader.ReadAsync(ct).ConfigureAwait(false)
+            : null;
+
         var modelRequest = new ModelRequest
         {
-            System =
-                "You resolve web form fields to canonical autofill keys. You only ever emit " +
-                "one of the given canonical keys per field, or an empty string when a field " +
-                "genuinely cannot be mapped.",
-            User = BuildBrief(request),
+            System = BuildSystemPrompt(request.Effort),
+            User = BuildBrief(request, profile),
             SchemaName = JsonSchemaRegistry.FieldResolutionsSchemaName,
-            MaxOutputTokens = 512,
+            MaxOutputTokens = MaxOutputTokensFor(request.Effort),
             Temperature = 0,
             CacheKey = $"autofill:{request.Host}:{request.FormSignature}",
         };
 
         var response = await languageModel.CompleteAsync<IReadOnlyList<FieldResolution>>(modelRequest, ct).ConfigureAwait(false);
 
-        return TypedResults.Ok(new ResolveFieldsResponse { Resolutions = response.Value, Usage = response.Usage });
+        // Deterministic backstop, independent of which ILanguageModel produced the
+        // response: optionValue is never surfaced for a select/radio choice below
+        // Standard effort, nor as a free-text answer for any other input type below
+        // Thorough — regardless of what a real provider chose to return.
+        var resolutions = EnforceEffortGate(request, response.Value);
+
+        return TypedResults.Ok(new ResolveFieldsResponse { Resolutions = resolutions, Usage = response.Usage });
+    }
+
+    private static string BuildSystemPrompt(ModelEffort effort)
+    {
+        const string Base =
+            "You resolve web form fields to canonical autofill keys. You only ever emit " +
+            "one of the given canonical keys per field, or an empty string when a field " +
+            "genuinely cannot be mapped.";
+
+        if (effort < ModelEffort.Thorough)
+        {
+            return Base;
+        }
+
+        // Free-text answers are subject to the same fabrication rule as resume bullets
+        // (CONTRACTS.md §10): an answer may only assert what the knowledge base supports.
+        return Base +
+            " For select/radio fields, propose the best-matching option in optionValue. " +
+            "For text or textarea fields asking an open question (e.g. \"why this role\", " +
+            "\"describe a project\"), you may also propose a free-text answer in " +
+            "optionValue, grounded only in the PROFILE section of the brief — never invent " +
+            "a fact, employer, date, or metric that isn't there. Leave optionValue null " +
+            "rather than guess.";
+    }
+
+    /// <summary>
+    /// Per CONTRACTS.md §10's effort table: a longer per-answer budget at
+    /// <see cref="ModelEffort.Maximum"/>, a moderate one once free-text answers unlock at
+    /// <see cref="ModelEffort.Thorough"/>, and the original fixed budget below that (where
+    /// tier 3 only ever emits a canonical key and, at Standard, a chosen option — both cheap).
+    /// </summary>
+    private static int MaxOutputTokensFor(ModelEffort effort) => effort switch
+    {
+        ModelEffort.Maximum => 2048,
+        ModelEffort.Thorough => 1024,
+        _ => 512,
+    };
+
+    /// <summary>
+    /// Strips <see cref="FieldResolution.OptionValue"/> from any resolution the requested
+    /// effort does not license: a select/radio choice requires at least
+    /// <see cref="ModelEffort.Standard"/>; a free-text answer for any other input type
+    /// requires at least <see cref="ModelEffort.Thorough"/>. Enforced here, deterministically,
+    /// rather than trusted from the model's own response.
+    /// </summary>
+    private static IReadOnlyList<FieldResolution> EnforceEffortGate(ResolveFieldsRequest request, IReadOnlyList<FieldResolution> resolutions)
+    {
+        var inputTypeByElement = request.Fields.ToDictionary(f => f.ElementId, f => f.InputType, StringComparer.Ordinal);
+
+        return [.. resolutions.Select(resolution =>
+        {
+            if (resolution.OptionValue is null || !inputTypeByElement.TryGetValue(resolution.ElementId, out var inputType))
+            {
+                return resolution;
+            }
+
+            var isChoiceInput = string.Equals(inputType, "select", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(inputType, "radio", StringComparison.OrdinalIgnoreCase);
+
+            var allowed = isChoiceInput ? request.Effort >= ModelEffort.Standard : request.Effort >= ModelEffort.Thorough;
+
+            return allowed ? resolution : resolution with { OptionValue = null };
+        })];
     }
 
     private static async Task<IResult> SaveFieldMapAsync(LearnedFieldMap map, ILearnedFieldMapRepository repository, CancellationToken ct)
@@ -163,11 +237,18 @@ public static class AutofillEndpoints
             : TypedResults.Json(map, statusCode: StatusCodes.Status200OK);
     }
 
-    private static string BuildBrief(ResolveFieldsRequest request)
+    private static string BuildBrief(ResolveFieldsRequest request, KnowledgeBaseSnapshot? profile)
     {
         var sb = new System.Text.StringBuilder();
+        sb.Append("EFFORT|").Append(EffortToken(request.Effort)).Append('\n');
         sb.Append("CANONICAL-KEYS: ").Append(string.Join(',', CanonicalFieldKeys)).Append('\n');
         sb.Append("HOST: ").Append(request.Host).Append('\n');
+
+        if (profile is not null)
+        {
+            AppendProfileSection(sb, profile);
+        }
+
         sb.Append("FIELDS\n");
 
         foreach (var field in request.Fields)
@@ -184,6 +265,40 @@ public static class AutofillEndpoints
 
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Compact, KB-grounded material for free-text answers: the default summary plus a
+    /// handful of the most substantial bullets across every knowledge-base item, each
+    /// truncated. Gives a real model concrete evidence to draw an honest "describe a
+    /// project"-style answer from without shipping the whole knowledge base — the same
+    /// token-economics discipline <c>BriefBuilder</c> applies to the tailoring brief.
+    /// </summary>
+    private static void AppendProfileSection(System.Text.StringBuilder sb, KnowledgeBaseSnapshot profile)
+    {
+        sb.Append("PROFILE\n");
+
+        if (!string.IsNullOrWhiteSpace(profile.DefaultSummary))
+        {
+            sb.Append("summary|").Append(TruncateForBrief(profile.DefaultSummary, 400)).Append('\n');
+        }
+
+        foreach (var bullet in profile.Items.SelectMany(i => i.Bullets.Select(b => b.Text)).Where(t => t.Length > 0).Take(10))
+        {
+            sb.Append("evidence|").Append(TruncateForBrief(bullet, 200)).Append('\n');
+        }
+    }
+
+    private static string TruncateForBrief(string text, int max) =>
+        text.Length <= max ? text : string.Concat(text.AsSpan(0, Math.Max(0, max - 1)), "…");
+
+    private static string EffortToken(ModelEffort effort) => effort switch
+    {
+        ModelEffort.Minimal => "minimal",
+        ModelEffort.Standard => "standard",
+        ModelEffort.Thorough => "thorough",
+        ModelEffort.Maximum => "maximum",
+        _ => "standard",
+    };
 
     private static (string? FirstName, string? LastName) SplitName(string fullName)
     {

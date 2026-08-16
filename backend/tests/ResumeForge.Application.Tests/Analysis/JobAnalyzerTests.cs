@@ -251,4 +251,33 @@ public sealed class JobAnalyzerTests
         analysis.MatchedSkills.ShouldNotBeEmpty();
         analysis.MatchedSkills.ShouldBeSubsetOf(analysis.Keywords);
     }
+
+    [Fact]
+    public void Hiring_boilerplate_verb_is_not_extracted_as_a_matched_skill()
+    {
+        // Regression: a posting opening with "We are hiring a senior backend engineer"
+        // must not surface "hiring" as a matched/keyword skill just because the taxonomy
+        // separately recognizes it as a legitimate professional skill (interviewing,
+        // recruiting) — that reading describes the employer's own action here, not a
+        // requirement of the role.
+        var taxonomy = new FakeSkillTaxonomy().Add("hiring", "soft", "hiring");
+        var analysis = new JobAnalyzer(taxonomy).Analyze(TestData.Posting(
+            rawText: "We are hiring a Senior Backend Engineer.\n\nRequirements\n- Build things"));
+
+        analysis.Keywords.ShouldNotContain("hiring");
+        analysis.MatchedSkills.ShouldNotContain("hiring");
+    }
+
+    [Fact]
+    public void Other_soft_skill_verbs_in_the_same_category_are_still_extracted()
+    {
+        // The "hiring" stop-list entry must not blanket-suppress the rest of the
+        // professional-skills category: a genuine requirement phrased as a verb (e.g.
+        // "mentoring junior engineers") is real signal and should still match.
+        var taxonomy = new FakeSkillTaxonomy().Add("mentoring", "soft", "mentoring");
+        var analysis = new JobAnalyzer(taxonomy).Analyze(TestData.Posting(
+            rawText: "Requirements\n- Proven track record mentoring junior engineers"));
+
+        analysis.MatchedSkills.ShouldContain("mentoring");
+    }
 }

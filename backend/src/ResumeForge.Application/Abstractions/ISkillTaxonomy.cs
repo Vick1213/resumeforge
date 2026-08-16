@@ -22,6 +22,15 @@ public interface ISkillTaxonomy
     IReadOnlyList<string> AliasesFor(string canonical);
 
     /// <summary>
+    /// The human-facing spelling for <paramref name="canonical"/> (e.g. <c>"C#"</c> for
+    /// <c>"csharp"</c>, <c>".NET"</c> for <c>"dotnet"</c>) — what user-visible prose (a
+    /// rendered bullet, a rewritten sentence) should print instead of the normalized match
+    /// key. Falls back to <paramref name="canonical"/> itself when the taxonomy has no
+    /// display name recorded for it, so a caller never has to special-case an unknown name.
+    /// </summary>
+    string DisplayNameOf(string canonical);
+
+    /// <summary>
     /// The taxonomy category a canonical skill belongs to — one of
     /// <c>languages</c>, <c>frameworks</c>, <c>datastores</c>, <c>cloud</c>,
     /// <c>practices</c>, <c>tools</c>, or <c>soft</c>. Used to bucket derived skill

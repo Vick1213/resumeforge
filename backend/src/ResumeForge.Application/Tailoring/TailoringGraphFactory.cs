@@ -85,9 +85,11 @@ public sealed class TailoringGraphFactory(
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var options = request.MaxRewrites is { } maxRewrites
-            ? tailorOptions with { MaxRewrites = maxRewrites }
-            : tailorOptions;
+        var options = tailorOptions with
+        {
+            MaxRewrites = request.Effort.ResolveMaxRewrites(request.MaxRewrites),
+            Effort = request.Effort,
+        };
 
         return new GraphBuilder()
             .AddNode(FetchJd, async (_, ct) =>
@@ -149,7 +151,7 @@ public sealed class TailoringGraphFactory(
                 var brief = ctx.Get<string>(BuildBrief);
                 var modelRequest = new ModelRequest
                 {
-                    System = SystemPrompt,
+                    System = SystemPromptFor(request.Effort),
                     User = brief,
                     SchemaName = "tailor-commands",
                     MaxOutputTokens = 1024,
@@ -219,6 +221,32 @@ public sealed class TailoringGraphFactory(
         var doc = ctx.Get<ResumeDocument>(BuildBase);
         var analysis = ctx.Get<JobAnalysis>(AnalyzeJd);
         return select(relevanceScorer.Score(doc, analysis));
+    }
+
+    /// <summary>
+    /// Builds the system prompt for a given effort: the base instructions plus, at
+    /// <see cref="ModelEffort.Thorough"/> and above, permission to propose
+    /// <c>injectKeywords</c> (still bound by the fabrication guard and KB-evidence rule
+    /// enforced deterministically by <see cref="CommandValidator"/>), and at
+    /// <see cref="ModelEffort.Maximum"/>, an instruction to regenerate the summary every
+    /// run rather than leaving it as-is (CONTRACTS.md §6's effort table).
+    /// </summary>
+    private static string SystemPromptFor(ModelEffort effort)
+    {
+        if (effort < ModelEffort.Thorough)
+        {
+            return SystemPrompt;
+        }
+
+        var prompt = SystemPrompt +
+            " At this effort level you may also propose injectKeywords commands to weave " +
+            "job-description keywords into an existing bullet, but only keywords the " +
+            "candidate's knowledge base already evidences elsewhere — never a keyword the " +
+            "candidate cannot support.";
+
+        return effort == ModelEffort.Maximum
+            ? prompt + " Always propose a setSummary command tailored specifically to this job."
+            : prompt;
     }
 
     private FabricationVerification VerifyFabricationOf(ResumeDocument doc, CommandValidationResult validation)

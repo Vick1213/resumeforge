@@ -1,9 +1,22 @@
-import { CANONICAL_KEYS, type CanonicalKey } from '../contracts';
+import { CANONICAL_KEYS, type CanonicalKey, type ModelEffort } from '../contracts';
 import type { FieldDescriptor } from '../content/types';
 import { AUTOCOMPLETE_MAP, SYNONYMS } from './synonyms';
 
-/** Confidence at or above which the heuristic tier accepts a match (CONTRACTS.md §10). */
-export const ACCEPT_THRESHOLD = 0.72;
+/**
+ * Confidence at or above which the heuristic tier accepts a match, per
+ * effort level (CONTRACTS.md §10). Higher effort raises the bar, so the
+ * free matcher keeps only what it's confident about and hands more of the
+ * form to the (token-spending) model fallback.
+ */
+export const ACCEPT_THRESHOLD_BY_EFFORT: Record<ModelEffort, number> = {
+  minimal: 0.6,
+  standard: 0.72,
+  thorough: 0.8,
+  maximum: 0.88
+};
+
+/** The `standard`-effort threshold — kept as the module's historical default. */
+export const ACCEPT_THRESHOLD = ACCEPT_THRESHOLD_BY_EFFORT.standard;
 
 /**
  * Below this, a score is treated as noise and clamped to 0 rather than
@@ -124,13 +137,18 @@ export interface HeuristicMatch {
 
 /**
  * Resolves every descriptor against every canonical key, keeping only the
- * best-scoring key per field and only when it clears `ACCEPT_THRESHOLD`.
- * This is tier 2 of the cascade — zero model tokens.
+ * best-scoring key per field and only when it clears the accept threshold
+ * for `effort` (CONTRACTS.md §10; defaults to `standard`, i.e.
+ * `ACCEPT_THRESHOLD`). This is tier 2 of the cascade — zero model tokens,
+ * regardless of effort; effort only shifts how much of the form tier 2 is
+ * willing to keep for itself versus leaving for the model fallback.
  */
 export function resolveByHeuristic(
-  descriptors: readonly FieldDescriptor[]
+  descriptors: readonly FieldDescriptor[],
+  effort: ModelEffort = 'standard'
 ): Map<string, HeuristicMatch> {
   const result = new Map<string, HeuristicMatch>();
+  const acceptThreshold = ACCEPT_THRESHOLD_BY_EFFORT[effort];
 
   for (const descriptor of descriptors) {
     let bestKey: CanonicalKey | undefined;
@@ -144,7 +162,7 @@ export function resolveByHeuristic(
       }
     }
 
-    if (bestKey && bestScore >= ACCEPT_THRESHOLD) {
+    if (bestKey && bestScore >= acceptThreshold) {
       result.set(descriptor.elementId, { key: bestKey, confidence: bestScore });
     }
   }

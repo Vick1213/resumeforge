@@ -43,6 +43,23 @@ public sealed partial class JobAnalyzer(ISkillTaxonomy taxonomy) : IJobAnalyzer
         "All", "New", "Team", "Role", "Work", "Working", "About",
     };
 
+    /// <summary>
+    /// Canonical taxonomy entries that double as common English verbs describing the
+    /// *employer's* own action in ordinary JD boilerplate — "We are hiring a senior
+    /// backend engineer" — rather than a skill the candidate is being asked to
+    /// demonstrate. Extracting these from that kind of opener pollutes
+    /// <see cref="JobAnalysis.MatchedSkills"/> (and, downstream, the emphasizeSkills
+    /// target set built from it) with a false match on nearly every posting. Skills whose
+    /// canonical form describes something the *candidate* does (mentoring, onboarding,
+    /// on-call) are left alone, since those are genuine signals even when phrased as a
+    /// verb. Kept separate from <see cref="StopWords"/>, which filters candidate
+    /// MissingSkills tokens rather than confirmed taxonomy hits.
+    /// </summary>
+    private static readonly HashSet<string> NonSkillVerbCanonicals = new(StringComparer.Ordinal)
+    {
+        "hiring",
+    };
+
     /// <inheritdoc />
     public JobAnalysis Analyze(JobPosting posting)
     {
@@ -225,7 +242,7 @@ public sealed partial class JobAnalyzer(ISkillTaxonomy taxonomy) : IJobAnalyzer
                     continue;
                 }
 
-                if (!taxonomy.TryCanonicalize(normalized, out var canonical))
+                if (!taxonomy.TryCanonicalize(normalized, out var canonical) || NonSkillVerbCanonicals.Contains(canonical))
                 {
                     continue;
                 }
@@ -292,59 +309,9 @@ public sealed partial class JobAnalyzer(ISkillTaxonomy taxonomy) : IJobAnalyzer
 
     private static SeniorityLevel DetectSeniority(string? title, string rawText)
     {
-        var fromTitle = DetectSeniorityFromTitle(title);
+        var fromTitle = SeniorityClassifier.FromTitle(title);
         var fromYears = DetectSeniorityFromYears(rawText);
         return fromTitle > fromYears ? fromTitle : fromYears;
-    }
-
-    private static SeniorityLevel DetectSeniorityFromTitle(string? title)
-    {
-        if (string.IsNullOrWhiteSpace(title))
-        {
-            return SeniorityLevel.Unknown;
-        }
-
-        var lower = title.ToLowerInvariant();
-
-        if (lower.Contains("principal", StringComparison.Ordinal))
-        {
-            return SeniorityLevel.Principal;
-        }
-
-        if (lower.Contains("staff", StringComparison.Ordinal))
-        {
-            return SeniorityLevel.Staff;
-        }
-
-        if (lower.Contains("senior", StringComparison.Ordinal) ||
-            lower.Contains("sr.", StringComparison.Ordinal) ||
-            lower.Contains("sr ", StringComparison.Ordinal) ||
-            lower.Contains("lead", StringComparison.Ordinal))
-        {
-            return SeniorityLevel.Senior;
-        }
-
-        if (lower.Contains("intern", StringComparison.Ordinal))
-        {
-            return SeniorityLevel.Intern;
-        }
-
-        if (lower.Contains("junior", StringComparison.Ordinal) ||
-            lower.Contains("jr.", StringComparison.Ordinal) ||
-            lower.Contains("entry level", StringComparison.Ordinal) ||
-            lower.Contains("entry-level", StringComparison.Ordinal))
-        {
-            return SeniorityLevel.Junior;
-        }
-
-        if (lower.Contains("mid-level", StringComparison.Ordinal) ||
-            lower.Contains("mid level", StringComparison.Ordinal) ||
-            MidLevelSuffixPattern().IsMatch(lower))
-        {
-            return SeniorityLevel.Mid;
-        }
-
-        return SeniorityLevel.Unknown;
     }
 
     private static SeniorityLevel DetectSeniorityFromYears(string rawText)
@@ -475,9 +442,6 @@ public sealed partial class JobAnalyzer(ISkillTaxonomy taxonomy) : IJobAnalyzer
 
     [GeneratedRegex(@"(?<years>\d+)\s*\+?\s*years?", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex YearsPatternNamed();
-
-    [GeneratedRegex(@"\b(ii|iii|iv|2|3)\b", RegexOptions.CultureInvariant)]
-    private static partial Regex MidLevelSuffixPattern();
 
     [GeneratedRegex(@"^(requirements?|qualifications?|what you.?ll need|what we.?re looking for|minimum qualifications?|basic qualifications?)$", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex RequirementsHeadingPattern();

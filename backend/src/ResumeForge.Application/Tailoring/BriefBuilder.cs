@@ -28,6 +28,8 @@ public sealed class BriefBuilder : IBriefBuilder
 
         var sb = new StringBuilder();
 
+        sb.Append("EFFORT|").Append(EffortToken(options.Effort)).Append('\n');
+
         sb.Append("REQUIREMENTS\n");
         foreach (var requirement in analysis.Requirements)
         {
@@ -40,8 +42,30 @@ public sealed class BriefBuilder : IBriefBuilder
         AppendBulletCandidates(sb, "CANDIDATES-PROJECTS", candidates.Projects, baseResume, options.CandidateLimit);
         AppendSkillCandidates(sb, candidates.Skills, options.CandidateLimit);
 
+        // injectKeywords is only available at Thorough and above (CONTRACTS.md §6), so the
+        // candidate keyword pool — the JD terms the taxonomy recognizes, which is exactly
+        // what CommandValidator's rule 6 and HeuristicLanguageModel's KB-evidence check
+        // reason about — is only worth the tokens to include at that effort or higher.
+        if (options.Effort >= ModelEffort.Thorough)
+        {
+            sb.Append("KEYWORDS\n");
+            foreach (var keyword in analysis.MatchedSkills)
+            {
+                sb.Append(keyword).Append('\n');
+            }
+        }
+
         return sb.ToString();
     }
+
+    private static string EffortToken(ModelEffort effort) => effort switch
+    {
+        ModelEffort.Minimal => "minimal",
+        ModelEffort.Standard => "standard",
+        ModelEffort.Thorough => "thorough",
+        ModelEffort.Maximum => "maximum",
+        _ => "standard",
+    };
 
     /// <inheritdoc />
     public int EstimateTokens(string text)

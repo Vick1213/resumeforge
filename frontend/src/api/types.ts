@@ -305,6 +305,13 @@ export interface CandidateSet {
 // 6. Tailoring commands
 // ---------------------------------------------------------------------------
 
+/**
+ * Buys more decisions from the model, never a longer echoed-back document.
+ * Serializes as the lowercase name. `standard` is the wire default — an
+ * omitted `effort` on a request reproduces pre-effort behaviour exactly.
+ */
+export type ModelEffort = 'minimal' | 'standard' | 'thorough' | 'maximum';
+
 interface TailorCommandBase {
   rationale?: string;
 }
@@ -352,6 +359,22 @@ export interface SetSectionOrderCommand extends TailorCommandBase {
   order: SectionKind[];
 }
 
+/**
+ * Weaves job-description keywords into an existing bullet. Only available at
+ * `Thorough` effort and above, and only for keywords the knowledge base
+ * already evidences — see `unsupported-keyword` and `op-unavailable-at-effort`
+ * below. This is the honest form of ATS keyword optimization: it surfaces
+ * terms the person can actually support and refuses the rest.
+ */
+export interface InjectKeywordsCommand extends TailorCommandBase {
+  op: 'injectKeywords';
+  target: string;
+  /** Normalized keyword names, each independently evidenced in the KB. */
+  keywords: string[];
+  /** The rewritten bullet with the keywords woven in. */
+  text: string;
+}
+
 /** Discriminated union on `op`, mirroring the [JsonPolymorphic] hierarchy. */
 export type TailorCommand =
   | IncludeCommand
@@ -361,7 +384,8 @@ export type TailorCommand =
   | RewriteCommand
   | SetSummaryCommand
   | EmphasizeSkillsCommand
-  | SetSectionOrderCommand;
+  | SetSectionOrderCommand
+  | InjectKeywordsCommand;
 
 export type TailorCommandOp = TailorCommand['op'];
 
@@ -376,6 +400,8 @@ export type RejectionCode =
   | 'fabricated-metric'
   | 'rewrite-budget-exceeded'
   | 'duplicate-order-entry'
+  | 'unsupported-keyword'
+  | 'op-unavailable-at-effort'
   | (string & {});
 
 export interface RejectedCommand {
@@ -396,7 +422,8 @@ export type DiffKind =
   | 'rewritten'
   | 'variantSelected'
   | 'summarySet'
-  | 'skillEmphasized';
+  | 'skillEmphasized'
+  | 'keywordsInjected';
 
 export interface ResumeDiffEntry {
   entityId: string;
@@ -404,6 +431,8 @@ export interface ResumeDiffEntry {
   before?: string;
   after?: string;
   rationale?: string;
+  /** Populated only when `kind === 'keywordsInjected'`; empty/absent otherwise. */
+  keywords?: string[];
 }
 
 export interface RequirementCoverage {
@@ -456,7 +485,10 @@ export interface TailoringResult {
 export interface TailorRequest {
   jobId: string;
   baseResumeId?: string;
-  maxRewrites: number;
+  /** Defaults to 'standard' server-side when omitted; the UI always sends an explicit value. */
+  effort?: ModelEffort;
+  /** Derived from `effort` when omitted; an explicit value here wins over the preset. */
+  maxRewrites?: number;
   dryRun: boolean;
 }
 
@@ -577,6 +609,8 @@ export interface ResolveFieldsRequest {
   host: string;
   formSignature: string;
   fields: UnresolvedField[];
+  /** Raises the tier-2 heuristic's accept threshold; see CONTRACTS.md §10. Defaults to 'standard'. */
+  effort?: ModelEffort;
 }
 
 export interface FieldResolution {
@@ -596,5 +630,12 @@ export interface LearnedFieldMap {
   formSignature: string;
   elementToKey: Record<string, string>;
   learnedAt: IsoDateTime;
+  /**
+   * The effort the map was learned at. A map learned at a lower effort is
+   * still a valid cache hit, but re-running at higher effort must be able to
+   * resolve fields the earlier pass left unmapped rather than treating the
+   * cached map as complete. Defaults to 'standard'.
+   */
+  learnedAtEffort?: ModelEffort;
   hitCount: number;
 }

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { BookmarkCheck, BookmarkPlus, Sparkles } from 'lucide-react';
 import { useCreateApplication, useCreateJob, useJobAnalysis, useTailor } from '@/api/queries';
-import type { JobPosting, SeniorityLevel } from '@/api/types';
+import type { JobPosting, ModelEffort, SeniorityLevel } from '@/api/types';
+import { DEFAULT_EFFORT } from '@/lib/effort';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -16,6 +17,7 @@ import { GraphTracePanel } from '@/components/graph/GraphTracePanel';
 import { CoveragePanel } from '@/components/tailor/CoveragePanel';
 import { DiffView } from '@/components/tailor/DiffView';
 import { CommandsPanel } from '@/components/tailor/CommandsPanel';
+import { EffortControl } from '@/components/tailor/EffortControl';
 import { TokenUsagePanel } from '@/components/tailor/TokenUsagePanel';
 import { ExportButtons } from '@/components/tailor/ExportButtons';
 
@@ -33,7 +35,7 @@ export default function Tailor() {
   const [inputMode, setInputMode] = useState<'url' | 'text'>('url');
   const [urlValue, setUrlValue] = useState('');
   const [textValue, setTextValue] = useState('');
-  const [maxRewrites, setMaxRewrites] = useState(6);
+  const [effort, setEffort] = useState<ModelEffort>(DEFAULT_EFFORT);
   const [job, setJob] = useState<JobPosting | undefined>(undefined);
 
   const createJob = useCreateJob();
@@ -56,7 +58,7 @@ export default function Tailor() {
 
   function handleRunTailor(): void {
     if (!job) return;
-    tailor.mutate({ jobId: job.id, maxRewrites, dryRun: false });
+    tailor.mutate({ jobId: job.id, effort, dryRun: false });
   }
 
   function handleSaveApplication(): void {
@@ -114,18 +116,7 @@ export default function Tailor() {
               />
             </TabsContent>
           </Tabs>
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-              Max rewrites
-              <Input
-                type="number"
-                min={0}
-                max={20}
-                value={maxRewrites}
-                onChange={(event) => setMaxRewrites(Number(event.target.value))}
-                className="w-16"
-              />
-            </label>
+          <div className="flex items-center justify-end">
             <Button type="submit" disabled={!canAnalyze || createJob.isPending}>
               <Sparkles className="h-4 w-4" aria-hidden="true" />
               {createJob.isPending ? 'Analyzing…' : 'Analyze job'}
@@ -163,10 +154,6 @@ export default function Tailor() {
                       {SENIORITY_LABELS[jobAnalysis.data.seniority]}
                     </p>
                   </div>
-                  <Button onClick={handleRunTailor} disabled={tailor.isPending}>
-                    <Sparkles className="h-4 w-4" aria-hidden="true" />
-                    {tailor.isPending ? 'Tailoring…' : 'Run tailoring'}
-                  </Button>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {jobAnalysis.data.keywords.slice(0, 10).map((keyword) => (
@@ -180,6 +167,18 @@ export default function Tailor() {
                     Missing from your knowledge base: {jobAnalysis.data.missingSkills.join(', ')}
                   </p>
                 )}
+                <div className="flex flex-col gap-3 border-t border-[var(--border)] pt-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                      Model effort
+                    </h3>
+                    <Button onClick={handleRunTailor} disabled={tailor.isPending}>
+                      <Sparkles className="h-4 w-4" aria-hidden="true" />
+                      {tailor.isPending ? 'Tailoring…' : 'Run tailoring'}
+                    </Button>
+                  </div>
+                  <EffortControl value={effort} onChange={setEffort} />
+                </div>
               </>
             )}
           </div>

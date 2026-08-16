@@ -49,7 +49,7 @@ public sealed class CommandExecutor(TimeProvider timeProvider) : ICommandExecuto
 
         foreach (var command in commands)
         {
-            if (command is SelectVariantCommand or RewriteCommand)
+            if (command is SelectVariantCommand or RewriteCommand or InjectKeywordsCommand)
             {
                 ctx.ApplyVariantOrRewrite(command, diff);
             }
@@ -404,6 +404,17 @@ public sealed class CommandExecutor(TimeProvider timeProvider) : ICommandExecuto
 
                     break;
                 }
+
+                case InjectKeywordsCommand inj when EntityId.TryParse(inj.Target, out var id):
+                {
+                    var (before, after) = UpdateBulletText(id, _ => inj.Text);
+                    if (before is not null)
+                    {
+                        diff.Add(NewDiff(inj.Target, DiffKind.KeywordsInjected, before, after, inj.Rationale, inj.Keywords));
+                    }
+
+                    break;
+                }
             }
         }
 
@@ -699,13 +710,15 @@ public sealed class CommandExecutor(TimeProvider timeProvider) : ICommandExecuto
         private static int BulletOrdinal(Bullet bullet) =>
             EntityId.TryParse(bullet.Id, out var id) && id.Ordinal is { } ordinal ? ordinal : int.MaxValue;
 
-        private static ResumeDiffEntry NewDiff(string entityId, DiffKind kind, string? before, string? after, string? rationale) => new()
+        private static ResumeDiffEntry NewDiff(
+            string entityId, DiffKind kind, string? before, string? after, string? rationale, IReadOnlyList<string>? keywords = null) => new()
         {
             EntityId = entityId,
             Kind = kind,
             Before = before,
             After = after,
             Rationale = rationale,
+            Keywords = keywords ?? [],
         };
     }
 }

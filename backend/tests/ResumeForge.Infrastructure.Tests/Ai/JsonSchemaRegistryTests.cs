@@ -44,7 +44,7 @@ public sealed class JsonSchemaRegistryTests
         var schema = _registry.GetSchema(JsonSchemaRegistry.TailorCommandsSchemaName);
         var oneOf = schema.GetProperty("properties").GetProperty("commands").GetProperty("items").GetProperty("oneOf");
 
-        oneOf.GetArrayLength().ShouldBe(8);
+        oneOf.GetArrayLength().ShouldBe(9);
         foreach (var variant in oneOf.EnumerateArray())
         {
             variant.GetProperty("properties").GetProperty("op").GetProperty("const").ValueKind.ShouldBe(JsonValueKind.String);
