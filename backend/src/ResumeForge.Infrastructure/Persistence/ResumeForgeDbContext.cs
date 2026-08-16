@@ -45,7 +45,12 @@ public sealed class ResumeForgeDbContext(DbContextOptions<ResumeForgeDbContext> 
         modelBuilder.Entity<ResumeEntity>(entity =>
         {
             entity.HasKey(e => e.Id);
-            entity.HasIndex(e => e.IsBase);
+
+            // A hard backstop for "at most one base resume": ResumeRepository.SaveAsync
+            // clears every other row's flag before setting a new one in the same
+            // transaction, but the filtered unique index means the invariant holds even if
+            // a future caller bypasses that logic (e.g. a raw SQL fix-up).
+            entity.HasIndex(e => e.IsBase).IsUnique().HasFilter("\"IsBase\" = 1");
             entity.HasIndex(e => e.UpdatedAt);
 
             entity.Property(e => e.Basics).HasConversion(JsonColumn.Converter<ResumeBasics>());

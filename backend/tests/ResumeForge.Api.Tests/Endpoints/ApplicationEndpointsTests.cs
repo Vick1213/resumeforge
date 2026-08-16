@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using ResumeForge.Api.Contracts;
 using ResumeForge.Api.Tests.TestSupport;
+using ResumeForge.Application.Abstractions;
 using ResumeForge.Application.Analysis;
 using Shouldly;
 using Xunit;
@@ -42,29 +43,38 @@ public sealed class ApplicationEndpointsTests(ResumeForgeApiFactory factory)
         created.Title.ShouldBe("Senior Backend Engineer");
         created.JobUrl.ShouldBe("https://example.com/jobs/1");
         created.Location.ShouldBe("Remote");
-        created.Status.ShouldBe(ApplicationStatusDto.Saved);
+        created.Status.ShouldBe(ApplicationStatus.Saved);
 
         var list = await client.GetFromJsonAsync<List<ApplicationDto>>("/api/applications", TestJson.Options);
         list.ShouldNotBeNull();
         list.ShouldContain(a => a.Id == created.Id && a.Company == "Acme Corp");
 
-        var patchRequest = new UpdateApplicationRequest { Status = ApplicationStatusDto.Interview };
+        var patchRequest = new UpdateApplicationRequest { Status = ApplicationStatus.Interview };
         using var patchResponse = await client.PatchAsJsonAsync($"/api/applications/{created.Id}", patchRequest, TestJson.Options);
 
         patchResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
         var patched = await patchResponse.Content.ReadFromJsonAsync<ApplicationDto>(TestJson.Options);
         patched.ShouldNotBeNull();
-        patched.Status.ShouldBe(ApplicationStatusDto.Interview);
+        patched.Status.ShouldBe(ApplicationStatus.Interview);
         patched.Notes.ShouldBe("Applied via referral."); // untouched fields survive a partial patch
         patched.Company.ShouldBe("Acme Corp"); // still joined from the job posting after the patch
     }
 
-    [Fact]
-    public async Task Screening_status_round_trips_through_the_shared_backend_interviewing_stage()
+    // Every status in the closed set (CONTRACTS.md §9) must come back unchanged: this is
+    // the exact defect the old ApplicationStatusMapping bridge introduced — e.g. "screening"
+    // silently reading back as "interview" after a save/reload. There is no translation
+    // layer left between ApplicationStatus and the wire now, so this asserts identity for
+    // all seven values, not just the two that used to collide.
+    [Theory]
+    [InlineData(ApplicationStatus.Saved)]
+    [InlineData(ApplicationStatus.Applied)]
+    [InlineData(ApplicationStatus.Screening)]
+    [InlineData(ApplicationStatus.Interview)]
+    [InlineData(ApplicationStatus.Offer)]
+    [InlineData(ApplicationStatus.Rejected)]
+    [InlineData(ApplicationStatus.Withdrawn)]
+    public async Task Every_status_round_trips_through_create_and_a_fresh_list_read_unchanged(ApplicationStatus status)
     {
-        // The backend's ApplicationStatus enum has one Interviewing stage; the frontend's
-        // has two (screening, interview). Both collapse to Interviewing on the way in and
-        // read back as "interview" — a documented, lossy gap (see ApplicationStatusMapping).
         using var client = factory.CreateClient();
         var jobId = await CreateJobAsync(client);
 
@@ -73,13 +83,19 @@ public sealed class ApplicationEndpointsTests(ResumeForgeApiFactory factory)
             JobId = jobId,
             Company = "Acme Corp",
             Title = "Senior Backend Engineer",
-            Status = ApplicationStatusDto.Screening,
+            Status = status,
         };
-        using var response = await client.PostAsJsonAsync("/api/applications", createRequest, TestJson.Options);
-
-        var created = await response.Content.ReadFromJsonAsync<ApplicationDto>(TestJson.Options);
+        using var createResponse = await client.PostAsJsonAsync("/api/applications", createRequest, TestJson.Options);
+        var created = await createResponse.Content.ReadFromJsonAsync<ApplicationDto>(TestJson.Options);
         created.ShouldNotBeNull();
-        created.Status.ShouldBe(ApplicationStatusDto.Interview);
+        created.Status.ShouldBe(status);
+
+        // Re-read through a separate GET (the "reload" step) rather than trusting the
+        // create response alone, so this also exercises the DB round-trip and the
+        // enum-to-string EF conversion, not just the request/response mapping.
+        var list = await client.GetFromJsonAsync<List<ApplicationDto>>("/api/applications", TestJson.Options);
+        list.ShouldNotBeNull();
+        list.Single(a => a.Id == created.Id).Status.ShouldBe(status);
     }
 
     [Fact]
@@ -88,7 +104,7 @@ public sealed class ApplicationEndpointsTests(ResumeForgeApiFactory factory)
         using var client = factory.CreateClient();
 
         using var response = await client.PatchAsJsonAsync(
-            "/api/applications/does-not-exist", new UpdateApplicationRequest { Status = ApplicationStatusDto.Applied }, TestJson.Options);
+            "/api/applications/does-not-exist", new UpdateApplicationRequest { Status = ApplicationStatus.Applied }, TestJson.Options);
 
         response.StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }

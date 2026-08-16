@@ -83,7 +83,9 @@ public static class TailorEndpoints
             UpdatedAt = timeProvider.GetUtcNow(),
         };
 
-        await resumeRepository.SaveAsync(toPersist, ct).ConfigureAwait(false);
+        // A tailoring run's output is a new variant, never the base resume, regardless of
+        // whether the source document it started from happened to be the base.
+        await resumeRepository.SaveAsync(toPersist, isBase: false, ct).ConfigureAwait(false);
 
         var runId = await runRepository.SaveAsync(
             new TailoringRunRecord

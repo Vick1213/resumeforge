@@ -75,7 +75,7 @@ public static class ApplicationEndpoints
                 Id = string.Empty,
                 JobId = request.JobId,
                 ResumeId = request.ResumeId,
-                Status = ApplicationStatusMapping.ToDomain(request.Status),
+                Status = request.Status,
                 Notes = request.Notes,
                 CreatedAt = now,
                 UpdatedAt = now,
@@ -104,7 +104,7 @@ public static class ApplicationEndpoints
         // this cannot clear Notes back to null once set. See the implementation report.
         var updated = existing with
         {
-            Status = request.Status is { } status ? ApplicationStatusMapping.ToDomain(status) : existing.Status,
+            Status = request.Status ?? existing.Status,
             Notes = request.Notes ?? existing.Notes,
             UpdatedAt = timeProvider.GetUtcNow(),
         };
@@ -126,7 +126,7 @@ public static class ApplicationEndpoints
         ResumeId = record.ResumeId,
         Company = job?.Company ?? string.Empty,
         Title = job?.Title ?? string.Empty,
-        Status = ApplicationStatusMapping.ToDto(record.Status),
+        Status = record.Status,
         JobUrl = job?.SourceUrl,
         Location = job?.Location,
         Notes = record.Notes,

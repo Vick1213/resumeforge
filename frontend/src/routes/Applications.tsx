@@ -28,6 +28,7 @@ const COLUMNS: { status: ApplicationStatus; label: string }[] = [
   { status: 'interview', label: 'Interview' },
   { status: 'offer', label: 'Offer' },
   { status: 'rejected', label: 'Rejected' },
+  { status: 'withdrawn', label: 'Withdrawn' },
 ];
 
 interface ApplicationCardProps {
@@ -165,8 +166,8 @@ export default function Applications() {
       </header>
 
       {applications.isLoading && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-          {Array.from({ length: 6 }, (_, index) => (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
+          {Array.from({ length: COLUMNS.length }, (_, index) => (
             <Skeleton key={index} className="h-64" />
           ))}
         </div>
@@ -183,7 +184,7 @@ export default function Applications() {
             description="Save a tailored resume from the Tailor page, or add one manually."
           />
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
             {COLUMNS.map((column) => {
               const items = data.filter((application) => application.status === column.status);
               return (

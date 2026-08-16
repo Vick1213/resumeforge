@@ -24,6 +24,7 @@ const FUNNEL_STAGES: { status: ApplicationStatus; label: string }[] = [
   { status: 'interview', label: 'Interview' },
   { status: 'offer', label: 'Offer' },
   { status: 'rejected', label: 'Rejected' },
+  { status: 'withdrawn', label: 'Withdrawn' },
 ];
 
 const linkButtonClass =

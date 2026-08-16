@@ -21,6 +21,13 @@ public interface IResumeRepository
     /// </summary>
     Task<ResumeDocument?> GetBaseAsync(CancellationToken ct);
 
-    /// <summary>Inserts or updates <paramref name="resume"/>.</summary>
-    Task SaveAsync(ResumeDocument resume, CancellationToken ct);
+    /// <summary>
+    /// Inserts or updates <paramref name="resume"/>. <paramref name="isBase"/> is the
+    /// explicit, caller-supplied flag for whether this row is the current base resume —
+    /// base-ness is never inferred from <see cref="ResumeDocument.Name"/>, so renaming a
+    /// resume can never silently change which one <see cref="GetBaseAsync"/> returns.
+    /// Setting <paramref name="isBase"/> to <see langword="true"/> clears the flag on every
+    /// other stored resume in the same operation, so at most one resume is ever the base.
+    /// </summary>
+    Task SaveAsync(ResumeDocument resume, bool isBase, CancellationToken ct);
 }

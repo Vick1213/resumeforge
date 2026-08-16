@@ -15,10 +15,9 @@ public sealed record ResumeSummaryDto
     public required string Name { get; init; }
 
     /// <summary>
-    /// True when this is the current base resume. Computed the same way
-    /// <c>ResumeRepository</c> identifies it internally — by the literal name "Base
-    /// resume" — since <see cref="Domain.Resume.ResumeDocument"/> carries no flag of its
-    /// own; see the known limitation called out in the implementation report.
+    /// True when this is the current base resume. Backed by the explicit, persisted
+    /// <c>ResumeEntity.IsBase</c> flag — never derived from the resume's name — so renaming
+    /// a resume never changes which one this reports as the base.
     /// </summary>
     public required bool IsBase { get; init; }
 

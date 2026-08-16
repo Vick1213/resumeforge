@@ -42,10 +42,10 @@ public sealed class ApplicationRepositoryTests : IDisposable
         var created = await repository.CreateAsync(NewApplication(), CancellationToken.None);
 
         var updated = await new ApplicationRepository(_fixture.Reload()).UpdateAsync(
-            created with { Status = ApplicationStatus.Interviewing, Notes = "Phone screen passed." }, CancellationToken.None);
+            created with { Status = ApplicationStatus.Interview, Notes = "Phone screen passed." }, CancellationToken.None);
 
         updated.ShouldNotBeNull();
-        updated.Status.ShouldBe(ApplicationStatus.Interviewing);
+        updated.Status.ShouldBe(ApplicationStatus.Interview);
         updated.Notes.ShouldBe("Phone screen passed.");
     }
 
@@ -67,5 +67,30 @@ public sealed class ApplicationRepositoryTests : IDisposable
         var list = await new ApplicationRepository(_fixture.Reload()).ListAsync(CancellationToken.None);
 
         list.Select(a => a.Id).ShouldBe(["a2", "a1"]);
+    }
+
+    // Guards the EF Core enum<->string column conversion directly (ResumeForgeDbContext
+    // configures ApplicationEntity.Status with HasConversion<string>()): every value in the
+    // closed set (CONTRACTS.md §9) must survive a write, a context reload, and a read back
+    // as the exact same enum member. This is the layer beneath the API round-trip test —
+    // it would have caught a member-name mismatch even if the API-level DTO mapping were
+    // otherwise correct.
+    [Theory]
+    [InlineData(ApplicationStatus.Saved)]
+    [InlineData(ApplicationStatus.Applied)]
+    [InlineData(ApplicationStatus.Screening)]
+    [InlineData(ApplicationStatus.Interview)]
+    [InlineData(ApplicationStatus.Offer)]
+    [InlineData(ApplicationStatus.Rejected)]
+    [InlineData(ApplicationStatus.Withdrawn)]
+    public async Task Every_status_survives_a_save_and_context_reload(ApplicationStatus status)
+    {
+        var repository = new ApplicationRepository(_fixture.Context);
+        var created = await repository.CreateAsync(NewApplication(status: status), CancellationToken.None);
+
+        var reloaded = await new ApplicationRepository(_fixture.Reload()).GetAsync(created.Id, CancellationToken.None);
+
+        reloaded.ShouldNotBeNull();
+        reloaded.Status.ShouldBe(status);
     }
 }

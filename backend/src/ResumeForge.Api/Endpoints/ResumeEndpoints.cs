@@ -32,8 +32,9 @@ public static class ResumeEndpoints
     private static async Task<IResult> ListAsync(IResumeRepository repository, CancellationToken ct)
     {
         var resumes = await repository.ListAsync(ct).ConfigureAwait(false);
+        var baseResume = await repository.GetBaseAsync(ct).ConfigureAwait(false);
 
-        return TypedResults.Ok<IReadOnlyList<ResumeSummaryDto>>([.. resumes.Select(ToSummary)]);
+        return TypedResults.Ok<IReadOnlyList<ResumeSummaryDto>>([.. resumes.Select(r => ToSummary(r, baseResume?.Id))]);
     }
 
     private static async Task<IResult> GetAsync(string id, IResumeRepository repository, CancellationToken ct)
@@ -51,27 +52,25 @@ public static class ResumeEndpoints
         var snapshot = await knowledgeBaseReader.ReadAsync(ct).ConfigureAwait(false);
 
         // Reuse the existing base resume's id, when there is one, so this rebuilds the same
-        // row in place rather than creating a second "Base resume" — ResumeRepository
-        // identifies the base resume by the literal Name "Base resume" (a documented,
-        // pre-existing limitation this endpoint inherits rather than works around).
+        // row in place rather than creating a second base resume. The row is identified by
+        // ResumeEntity.IsBase (an explicit, persisted flag), not by name, so this holds even
+        // if the base resume has since been renamed.
         var existingBase = await resumeRepository.GetBaseAsync(ct).ConfigureAwait(false);
 
         var rebuilt = resumeBuilder.Build(snapshot, existingBase?.Id);
-        await resumeRepository.SaveAsync(rebuilt, ct).ConfigureAwait(false);
+        await resumeRepository.SaveAsync(rebuilt, isBase: true, ct).ConfigureAwait(false);
 
         return TypedResults.Ok(rebuilt);
     }
 
-    private const string BaseResumeName = "Base resume";
-
-    private static ResumeSummaryDto ToSummary(ResumeDocument resume) => new()
+    private static ResumeSummaryDto ToSummary(ResumeDocument resume, string? baseResumeId) => new()
     {
         Id = resume.Id,
         Name = resume.Name,
-        // Mirrors ResumeRepository's own base-resume identification (a literal name match)
-        // since ResumeDocument carries no flag of its own; see the known limitation in the
-        // implementation report.
-        IsBase = string.Equals(resume.Name, BaseResumeName, StringComparison.Ordinal),
+        // Compares against the id GetBaseAsync (a real IsBase column lookup) returned,
+        // never the resume's Name — a rename can never change which resume this reports as
+        // the base.
+        IsBase = resume.Id == baseResumeId,
         UpdatedAt = resume.UpdatedAt,
     };
 }

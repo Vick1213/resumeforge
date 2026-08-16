@@ -26,7 +26,7 @@ public sealed class ResumeRepositoryTests : IDisposable
             createdAt: DateTimeOffset.UnixEpoch, updatedAt: DateTimeOffset.UnixEpoch);
 
         var repository = new ResumeRepository(_fixture.Context);
-        await repository.SaveAsync(document, CancellationToken.None);
+        await repository.SaveAsync(document, isBase: true, CancellationToken.None);
 
         var reloaded = await new ResumeRepository(_fixture.Reload()).GetAsync("resume-1", CancellationToken.None);
 
@@ -50,9 +50,9 @@ public sealed class ResumeRepositoryTests : IDisposable
     {
         var repository = new ResumeRepository(_fixture.Context);
         var document = TestData.Document(id: "resume-1", name: "Base resume", summary: "First.");
-        await repository.SaveAsync(document, CancellationToken.None);
+        await repository.SaveAsync(document, isBase: true, CancellationToken.None);
 
-        await repository.SaveAsync(document with { Summary = "Second." }, CancellationToken.None);
+        await repository.SaveAsync(document with { Summary = "Second." }, isBase: true, CancellationToken.None);
 
         var reloaded = await new ResumeRepository(_fixture.Reload()).GetAsync("resume-1", CancellationToken.None);
         reloaded!.Summary.ShouldBe("Second.");
@@ -64,8 +64,8 @@ public sealed class ResumeRepositoryTests : IDisposable
     public async Task ListAsync_orders_most_recently_updated_first()
     {
         var repository = new ResumeRepository(_fixture.Context);
-        await repository.SaveAsync(TestData.Document(id: "r1", name: "One", updatedAt: DateTimeOffset.UnixEpoch), CancellationToken.None);
-        await repository.SaveAsync(TestData.Document(id: "r2", name: "Two", updatedAt: DateTimeOffset.UnixEpoch.AddDays(1)), CancellationToken.None);
+        await repository.SaveAsync(TestData.Document(id: "r1", name: "One", updatedAt: DateTimeOffset.UnixEpoch), isBase: false, CancellationToken.None);
+        await repository.SaveAsync(TestData.Document(id: "r2", name: "Two", updatedAt: DateTimeOffset.UnixEpoch.AddDays(1)), isBase: false, CancellationToken.None);
 
         var list = await new ResumeRepository(_fixture.Reload()).ListAsync(CancellationToken.None);
 
@@ -73,11 +73,11 @@ public sealed class ResumeRepositoryTests : IDisposable
     }
 
     [Fact]
-    public async Task GetBaseAsync_returns_the_resume_named_Base_resume()
+    public async Task GetBaseAsync_returns_the_resume_flagged_as_base()
     {
         var repository = new ResumeRepository(_fixture.Context);
-        await repository.SaveAsync(TestData.Document(id: "tailored-1", name: "Acme - Backend"), CancellationToken.None);
-        await repository.SaveAsync(TestData.Document(id: "base-1", name: "Base resume"), CancellationToken.None);
+        await repository.SaveAsync(TestData.Document(id: "tailored-1", name: "Acme - Backend"), isBase: false, CancellationToken.None);
+        await repository.SaveAsync(TestData.Document(id: "base-1", name: "Base resume"), isBase: true, CancellationToken.None);
 
         var baseResume = await new ResumeRepository(_fixture.Reload()).GetBaseAsync(CancellationToken.None);
 
@@ -89,8 +89,44 @@ public sealed class ResumeRepositoryTests : IDisposable
     public async Task GetBaseAsync_returns_null_when_no_base_resume_has_been_saved()
     {
         var repository = new ResumeRepository(_fixture.Context);
-        await repository.SaveAsync(TestData.Document(id: "tailored-1", name: "Acme - Backend"), CancellationToken.None);
+        await repository.SaveAsync(TestData.Document(id: "tailored-1", name: "Acme - Backend"), isBase: false, CancellationToken.None);
 
         (await new ResumeRepository(_fixture.Reload()).GetBaseAsync(CancellationToken.None)).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task A_renamed_base_resume_is_still_identified_as_the_base()
+    {
+        // Base-ness is the isBase parameter, not the Name — a resume with no relation to
+        // the literal string "Base resume" must still be found by GetBaseAsync once it is
+        // saved with isBase: true, and simulates what a future rename feature would do:
+        // save the same id back under a new Name.
+        var repository = new ResumeRepository(_fixture.Context);
+        await repository.SaveAsync(TestData.Document(id: "base-1", name: "Base resume"), isBase: true, CancellationToken.None);
+
+        await repository.SaveAsync(TestData.Document(id: "base-1", name: "Jordan's Main Resume"), isBase: true, CancellationToken.None);
+
+        var baseResume = await new ResumeRepository(_fixture.Reload()).GetBaseAsync(CancellationToken.None);
+
+        baseResume.ShouldNotBeNull();
+        baseResume.Id.ShouldBe("base-1");
+        baseResume.Name.ShouldBe("Jordan's Main Resume");
+    }
+
+    [Fact]
+    public async Task Setting_a_new_base_clears_the_previous_one()
+    {
+        var repository = new ResumeRepository(_fixture.Context);
+        await repository.SaveAsync(TestData.Document(id: "base-1", name: "Base resume"), isBase: true, CancellationToken.None);
+
+        await repository.SaveAsync(TestData.Document(id: "base-2", name: "Rebuilt base"), isBase: true, CancellationToken.None);
+
+        var reloaded = _fixture.Reload();
+        var baseCount = await reloaded.Resumes.CountAsync(e => e.IsBase, TestContext.Current.CancellationToken);
+        baseCount.ShouldBe(1);
+
+        var currentBase = await new ResumeRepository(reloaded).GetBaseAsync(CancellationToken.None);
+        currentBase.ShouldNotBeNull();
+        currentBase.Id.ShouldBe("base-2");
     }
 }

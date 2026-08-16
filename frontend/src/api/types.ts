@@ -466,7 +466,7 @@ export interface RenderRequest {
   format: RenderFormat;
 }
 
-export type ApplicationStatus = 'saved' | 'applied' | 'screening' | 'interview' | 'offer' | 'rejected';
+export type ApplicationStatus = 'saved' | 'applied' | 'screening' | 'interview' | 'offer' | 'rejected' | 'withdrawn';
 
 export interface ApplicationDto {
   id: string;

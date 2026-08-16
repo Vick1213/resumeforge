@@ -6,15 +6,15 @@ using ResumeForge.Infrastructure.Persistence.Entities;
 namespace ResumeForge.Infrastructure.Persistence;
 
 /// <summary>
-/// EF/SQLite <see cref="IResumeRepository"/>. Identifies the current base resume by the
-/// documented default name <c>IResumeBuilder</c> assigns ("Base resume") rather than a
-/// field the shared <see cref="ResumeDocument"/> contract does not declare; see
-/// <see cref="ResumeEntity.IsBase"/>.
+/// EF/SQLite <see cref="IResumeRepository"/>. Base-ness is an explicit flag supplied by the
+/// caller on every <see cref="SaveAsync"/> and persisted on <see cref="ResumeEntity.IsBase"/>
+/// — the shared <see cref="ResumeDocument"/> contract carries no such field (it crosses
+/// component boundaries and CONTRACTS.md does not declare one), so the flag travels
+/// alongside the document as a separate parameter instead. Never inferred from
+/// <see cref="ResumeDocument.Name"/>, so renaming a resume cannot change which one is base.
 /// </summary>
 public sealed class ResumeRepository(ResumeForgeDbContext dbContext) : IResumeRepository
 {
-    private const string BaseResumeName = "Base resume";
-
     /// <inheritdoc />
     public async Task<ResumeDocument?> GetAsync(string id, CancellationToken ct)
     {
@@ -42,11 +42,27 @@ public sealed class ResumeRepository(ResumeForgeDbContext dbContext) : IResumeRe
     }
 
     /// <inheritdoc />
-    public async Task SaveAsync(ResumeDocument resume, CancellationToken ct)
+    public async Task SaveAsync(ResumeDocument resume, bool isBase, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(resume);
 
-        var isBase = string.Equals(resume.Name, BaseResumeName, StringComparison.Ordinal);
+        // Enforce "at most one base resume" here, atomically with the upsert below, rather
+        // than trusting callers to have cleared the previous base themselves. The clearing
+        // update is issued first and awaited on its own (rather than left for the change
+        // tracker to order arbitrarily against the upsert), so within the transaction the
+        // database never has two rows with IsBase = true at once — which the unique
+        // filtered index on ResumeEntity.IsBase (see ResumeForgeDbContext) also enforces as
+        // a hard backstop.
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        if (isBase)
+        {
+            await dbContext.Resumes
+                .Where(e => e.IsBase && e.Id != resume.Id)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(e => e.IsBase, false), ct)
+                .ConfigureAwait(false);
+        }
+
         var existing = await dbContext.Resumes.FirstOrDefaultAsync(e => e.Id == resume.Id, ct).ConfigureAwait(false);
 
         if (existing is null)
@@ -59,6 +75,7 @@ public sealed class ResumeRepository(ResumeForgeDbContext dbContext) : IResumeRe
         }
 
         await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
+        await transaction.CommitAsync(ct).ConfigureAwait(false);
     }
 
     private static ResumeDocument ToDocument(ResumeEntity e) => new()

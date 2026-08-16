@@ -21,7 +21,12 @@ public interface IApplicationRepository
     Task<JobApplicationRecord?> UpdateAsync(JobApplicationRecord application, CancellationToken ct);
 }
 
-/// <summary>The stage of a tracked job application in the funnel.</summary>
+/// <summary>
+/// The stage of a tracked job application in the funnel. Closed set defined by
+/// CONTRACTS.md §9, serialized as exactly these lowercase camelCase strings. Every value
+/// here crosses the wire unchanged — there is deliberately no translation layer between
+/// this type and the API's <c>ApplicationDto.Status</c>.
+/// </summary>
 public enum ApplicationStatus
 {
     /// <summary>Saved for later, not yet applied.</summary>
@@ -30,8 +35,11 @@ public enum ApplicationStatus
     /// <summary>Application submitted.</summary>
     Applied,
 
-    /// <summary>In an interview loop.</summary>
-    Interviewing,
+    /// <summary>Early-stage screening (recruiter call, take-home, etc.) — distinct from <see cref="Interview"/>.</summary>
+    Screening,
+
+    /// <summary>In an onsite/panel interview loop.</summary>
+    Interview,
 
     /// <summary>An offer has been extended.</summary>
     Offer,
@@ -39,7 +47,7 @@ public enum ApplicationStatus
     /// <summary>The application was rejected.</summary>
     Rejected,
 
-    /// <summary>The candidate withdrew.</summary>
+    /// <summary>The candidate withdrew — distinct from <see cref="Rejected"/>.</summary>
     Withdrawn,
 }
 
