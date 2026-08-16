@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/saatvik1213/resumeforge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/saatvik1213/resumeforge/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/Vick1213/resumeforge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Vick1213/resumeforge/actions/workflows/ci.yml/badge.svg"></a>
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>

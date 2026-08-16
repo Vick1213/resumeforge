@@ -646,7 +646,7 @@ Implementations in `ResumeForge.Infrastructure.Ai`:
   tests. Produces valid commands by pure ranking rules (include top-scored entries,
   select best-matching variants, order by relevance, no rewrites). The whole product must
   work end to end with this implementation; the repo must be runnable by a stranger with
-  no API key. Registration picks it automatically when `ANTHROPIC_API_KEY` is unset.
+  no API key. Registration picks it automatically when `DEEPSEEK_API_KEY` is unset.
 - `CachingLanguageModel` — decorator, SHA-256 of `(ModelId, System, User, SchemaName)`,
   backed by the database.
 
