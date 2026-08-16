@@ -128,7 +128,7 @@ public sealed class MarkdownResumeRenderer
 
     private static void AppendProjects(StringBuilder sb, IReadOnlyList<ProjectEntry> entries)
     {
-        var included = entries.Where(e => e.Included).ToList();
+        var included = entries.Where(e => e.Included && e.HasRenderableContent()).ToList();
         if (included.Count == 0)
         {
             return;

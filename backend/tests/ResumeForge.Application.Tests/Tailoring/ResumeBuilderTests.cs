@@ -97,9 +97,11 @@ public sealed class ResumeBuilderTests
     [Fact]
     public void Skill_groups_are_emitted_in_the_fixed_category_order()
     {
+        // Two skills per category so none of them are singletons that fold into Other —
+        // that behavior has its own tests below.
         var item = TestData.KnowledgeItem(
             KnowledgeItemType.Experience, "acme", "Engineer", "Acme", new DateOnly(2022, 1, 1), null, isCurrent: true,
-            tech: ["Docker", "Kubernetes", "C#", "PostgreSQL", "Agile"]);
+            tech: ["Docker", "Git", "Kubernetes", "AWS", "C#", "Python", "PostgreSQL", "Redis", "Agile", "CI/CD"]);
 
         var doc = NewBuilder().Build(Snapshot([item]));
 
@@ -123,9 +125,11 @@ public sealed class ResumeBuilderTests
     [Fact]
     public void Unrecognized_tech_goes_into_a_trailing_other_group()
     {
+        // Two languages so "languages" survives as its own group and only the unrecognized
+        // tech lands in Other — a lone recognized skill would itself fold into Other below.
         var item = TestData.KnowledgeItem(
             KnowledgeItemType.Experience, "acme", "Engineer", "Acme", new DateOnly(2022, 1, 1), null, isCurrent: true,
-            tech: ["C#", "SomeUnknownFramework"]);
+            tech: ["C#", "Python", "SomeUnknownFramework"]);
 
         var doc = NewBuilder().Build(Snapshot([item]));
 
@@ -135,15 +139,62 @@ public sealed class ResumeBuilderTests
     }
 
     [Fact]
-    public void Skill_ids_follow_category_and_canonical_name()
+    public void A_category_left_with_exactly_one_skill_folds_into_other()
     {
+        // "practices" ends up with just Agile — a single skill doesn't earn its own
+        // one-item row; it moves into Other instead.
         var item = TestData.KnowledgeItem(
             KnowledgeItemType.Experience, "acme", "Engineer", "Acme", new DateOnly(2022, 1, 1), null, isCurrent: true,
-            tech: ["C#"]);
+            tech: ["C#", "Python", "Agile"]);
 
         var doc = NewBuilder().Build(Snapshot([item]));
 
-        doc.Skills.Single().Items.Single().Id.ShouldBe("skl:languages#csharp");
+        doc.Skills.ShouldNotContain(g => g.Id == "skl:practices");
+        var other = doc.Skills.Single(g => g.Id == "skl:other");
+        other.Items.Single().Normalized.ShouldBe("agile");
+    }
+
+    [Fact]
+    public void A_category_with_two_or_more_skills_is_not_folded()
+    {
+        var item = TestData.KnowledgeItem(
+            KnowledgeItemType.Experience, "acme", "Engineer", "Acme", new DateOnly(2022, 1, 1), null, isCurrent: true,
+            tech: ["Agile", "CI/CD"]);
+
+        var doc = NewBuilder().Build(Snapshot([item]));
+
+        doc.Skills.Select(g => g.Id).ShouldBe(["skl:practices"]);
+    }
+
+    [Fact]
+    public void Multiple_singleton_categories_fold_into_one_trailing_other_group_sorted_alphabetically()
+    {
+        // languages (C#, Python) stays intact; Docker (tools), Kubernetes (cloud), and Agile
+        // (practices) are each alone in their category and fold together into Other,
+        // alongside the already-unrecognized SomeUnknownFramework — all sorted
+        // alphabetically by display name, same as any other skill group.
+        var item = TestData.KnowledgeItem(
+            KnowledgeItemType.Experience, "acme", "Engineer", "Acme", new DateOnly(2022, 1, 1), null, isCurrent: true,
+            tech: ["C#", "Python", "Docker", "Kubernetes", "Agile", "SomeUnknownFramework"]);
+
+        var doc = NewBuilder().Build(Snapshot([item]));
+
+        doc.Skills.Select(g => g.Id).ShouldBe(["skl:languages", "skl:other"]);
+        doc.Skills.Last().Items.Select(s => s.Name).ShouldBe(["Agile", "Docker", "Kubernetes", "SomeUnknownFramework"]);
+    }
+
+    [Fact]
+    public void Skill_ids_follow_category_and_canonical_name()
+    {
+        // A second language keeps "languages" from folding into Other, which would change
+        // the id's category segment — see the singleton-folding tests below for that case.
+        var item = TestData.KnowledgeItem(
+            KnowledgeItemType.Experience, "acme", "Engineer", "Acme", new DateOnly(2022, 1, 1), null, isCurrent: true,
+            tech: ["C#", "Python"]);
+
+        var doc = NewBuilder().Build(Snapshot([item]));
+
+        doc.Skills.Single().Items.Single(s => s.Normalized == "csharp").Id.ShouldBe("skl:languages#csharp");
     }
 
     [Fact]
@@ -183,8 +234,8 @@ public sealed class ResumeBuilderTests
 
         doc.SectionOrder.ShouldBe(
         [
-            SectionKind.Summary, SectionKind.Skills, SectionKind.Experience,
-            SectionKind.Projects, SectionKind.Education, SectionKind.Certifications,
+            SectionKind.Summary, SectionKind.Education, SectionKind.Skills,
+            SectionKind.Experience, SectionKind.Projects, SectionKind.Certifications,
         ]);
     }
 

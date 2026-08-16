@@ -37,11 +37,14 @@ public static class TestData
 
     public static ProjectEntry Project(
         string id, string name, DateOnly? start = null, DateOnly? end = null,
-        IReadOnlyList<Bullet>? bullets = null, IReadOnlyList<string>? tech = null, bool included = true, string? tagline = null) => new()
+        IReadOnlyList<Bullet>? bullets = null, IReadOnlyList<string>? tech = null, bool included = true, string? tagline = null,
+        string? url = null, string? repoUrl = null) => new()
     {
         Id = id,
         Name = name,
         Tagline = tagline,
+        Url = url,
+        RepoUrl = repoUrl,
         StartDate = start,
         EndDate = end,
         Bullets = bullets ?? [],
@@ -86,11 +89,18 @@ public static class TestData
         Included = included,
     };
 
-    public static ResumeBasics Basics(string fullName = "Jane Doe", string? headline = null, string? email = null) => new()
+    public static ResumeBasics Basics(
+        string fullName = "Jane Doe", string? headline = null, string? email = null,
+        string? phone = null, string? location = null, string? website = null, string? linkedIn = null, string? gitHub = null) => new()
     {
         FullName = fullName,
         Headline = headline,
         Email = email,
+        Phone = phone,
+        Location = location,
+        Website = website,
+        LinkedIn = linkedIn,
+        GitHub = gitHub,
     };
 
     public static ResumeDocument Document(
@@ -118,8 +128,8 @@ public static class TestData
         Certifications = certifications ?? [],
         SectionOrder = sectionOrder ??
         [
-            SectionKind.Summary, SectionKind.Skills, SectionKind.Experience,
-            SectionKind.Projects, SectionKind.Education, SectionKind.Certifications,
+            SectionKind.Summary, SectionKind.Education, SectionKind.Skills,
+            SectionKind.Experience, SectionKind.Projects, SectionKind.Certifications,
         ],
         CreatedAt = createdAt,
         UpdatedAt = updatedAt,

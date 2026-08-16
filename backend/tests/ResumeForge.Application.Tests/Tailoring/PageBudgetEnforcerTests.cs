@@ -167,6 +167,96 @@ public sealed class PageBudgetEnforcerTests
         renderer.RenderCount.ShouldBe(6); // one initial render, plus exactly one per capped pass
     }
 
+    [Fact]
+    public async Task A_pinned_low_relevance_project_survives_while_unpinned_higher_relevance_projects_are_cut()
+    {
+        // CONTRACTS.md §6 "Forced inclusion": a pin extends the never-cut floor regardless
+        // of relevance. "prj:pinned" scores at the very bottom of the ranking (lower than
+        // every other project here), yet must survive a tight budget that cuts the
+        // higher-scoring, unpinned projects around it.
+        var document = TestData.Document(
+            experience:
+            [
+                TestData.Experience(ExpTop, "Staff Engineer", "Acme", new DateOnly(2023, 1, 1), null,
+                    bullets: [TestData.Bullet($"{ExpTop}#0", "Led the platform team.")]),
+            ],
+            projects:
+            [
+                TestData.Project("prj:pinned", "Pinned Project", bullets: [TestData.Bullet("prj:pinned#0", "Low relevance work.")]),
+                .. Enumerable.Range(0, 10).Select(i =>
+                    TestData.Project($"prj:p{i}", $"Project {i}", bullets: [TestData.Bullet($"prj:p{i}#0", $"Higher relevance work {i}.")])),
+            ]);
+
+        var candidates = new CandidateSet
+        {
+            Experience = [new ScoredCandidate { EntityId = $"{ExpTop}#0", Text = "x", Score = 0.9, MatchedRequirements = [] }],
+            Projects =
+            [
+                new ScoredCandidate { EntityId = "prj:pinned#0", Text = "x", Score = 0.01, MatchedRequirements = [] },
+                .. Enumerable.Range(0, 10).Select(i =>
+                    new ScoredCandidate { EntityId = $"prj:p{i}#0", Text = "x", Score = 0.5 - (i * 0.01), MatchedRequirements = [] }),
+            ],
+            Skills = [],
+        };
+
+        // One included entry per page and a budget of 2: only the never-cut floor (ExpTop)
+        // plus the pin can ever satisfy that, so every unpinned project must be cut.
+        var renderer = new StubRenderer(entriesPerPage: 1);
+        var enforcer = new PageBudgetEnforcer(renderer);
+
+        var options = new TailorOptions { MaxPages = 2, PinnedEntryIds = ["prj:pinned"] };
+        var result = await enforcer.EnforceAsync(document, [], candidates, options, CancellationToken.None);
+
+        result.FitsBudget.ShouldBeTrue();
+        result.Document.Projects.Single(p => p.Id == "prj:pinned").Included.ShouldBeTrue();
+        result.Document.Projects.Where(p => p.Id != "prj:pinned").ShouldAllBe(p => !p.Included);
+        result.Document.Experience.Single(e => e.Id == ExpTop).Included.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Pins_that_cannot_fit_the_budget_leave_fits_budget_false_with_every_pinned_entry_still_included()
+    {
+        // Semantics rule 2: if pins alone exceed the budget, existing floor semantics apply
+        // — stop, FitsBudget = false, rather than cutting a pinned entry to make it fit.
+        var document = TestData.Document(
+            experience:
+            [
+                TestData.Experience(ExpTop, "Staff Engineer", "Acme", new DateOnly(2023, 1, 1), null,
+                    bullets: [TestData.Bullet($"{ExpTop}#0", "Led the platform team.")]),
+            ],
+            projects:
+            [
+                TestData.Project("prj:pinned-1", "Pinned One", bullets: [TestData.Bullet("prj:pinned-1#0", "Work one.")]),
+                TestData.Project("prj:pinned-2", "Pinned Two", bullets: [TestData.Bullet("prj:pinned-2#0", "Work two.")]),
+            ],
+            certifications: [TestData.Certification("cert:unpinned", "Some Cert")]);
+
+        var candidates = new CandidateSet
+        {
+            Experience = [new ScoredCandidate { EntityId = $"{ExpTop}#0", Text = "x", Score = 0.9, MatchedRequirements = [] }],
+            Projects =
+            [
+                new ScoredCandidate { EntityId = "prj:pinned-1#0", Text = "x", Score = 0.5, MatchedRequirements = [] },
+                new ScoredCandidate { EntityId = "prj:pinned-2#0", Text = "x", Score = 0.4, MatchedRequirements = [] },
+            ],
+            Skills = [],
+        };
+
+        // Always reports over budget, no matter what gets cut — forces the loop all the way
+        // down to the (pinned) floor.
+        var renderer = new StubRenderer(_ => 99);
+        var enforcer = new PageBudgetEnforcer(renderer);
+
+        var options = new TailorOptions { MaxPages = 1, PinnedEntryIds = ["prj:pinned-1", "prj:pinned-2"] };
+        var result = await enforcer.EnforceAsync(document, [], candidates, options, CancellationToken.None);
+
+        result.FitsBudget.ShouldBeFalse();
+        result.Document.Projects.Single(p => p.Id == "prj:pinned-1").Included.ShouldBeTrue();
+        result.Document.Projects.Single(p => p.Id == "prj:pinned-2").Included.ShouldBeTrue();
+        result.Document.Certifications.Single(c => c.Id == "cert:unpinned").Included.ShouldBeFalse();
+        result.Document.Experience.Single(e => e.Id == ExpTop).Included.ShouldBeTrue();
+    }
+
     private static ResumeDocument BuildDocument(int experienceCount, int projectCount, int certificationCount)
     {
         var experience = new List<ExperienceEntry>

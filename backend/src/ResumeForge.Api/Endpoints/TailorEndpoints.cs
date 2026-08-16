@@ -32,6 +32,7 @@ public static class TailorEndpoints
         IResumeRepository resumeRepository,
         ITailoringRunRepository runRepository,
         ITailoringService tailoringService,
+        IKnowledgeBaseReader knowledgeBaseReader,
         TimeProvider timeProvider,
         HttpContext httpContext,
         CancellationToken ct)
@@ -51,6 +52,12 @@ public static class TailorEndpoints
             }
         }
 
+        var forcedInclusionError = await ValidateForcedInclusionIdsAsync(request, knowledgeBaseReader, ct).ConfigureAwait(false);
+        if (forcedInclusionError is not null)
+        {
+            return forcedInclusionError;
+        }
+
         var serviceRequest = new TailoringRequest
         {
             JobId = request.JobId,
@@ -58,6 +65,8 @@ public static class TailorEndpoints
             MaxRewrites = request.MaxRewrites,
             Effort = request.Effort,
             MaxPages = request.MaxPages,
+            PinnedEntryIds = request.PinnedEntryIds,
+            ExcludedEntryIds = request.ExcludedEntryIds,
         };
 
         var result = await tailoringService.TailorAsync(serviceRequest, ct).ConfigureAwait(false);
@@ -112,6 +121,49 @@ public static class TailorEndpoints
 
         var responseResult = result with { Document = toPersist };
         return TypedResults.Ok(responseResult);
+    }
+
+    /// <summary>
+    /// Pre-flight validation for <see cref="TailorRequest.PinnedEntryIds"/> and
+    /// <see cref="TailorRequest.ExcludedEntryIds"/> (CONTRACTS.md §6 "Forced inclusion"),
+    /// following the same pattern <see cref="RunAsync"/> already uses to 404 an unknown
+    /// <c>JobId</c>/<c>BaseResumeId</c> before ever building the tailoring graph: look the
+    /// ids up against a repository the endpoint already has access to (here,
+    /// <see cref="IKnowledgeBaseReader"/>, the same source <c>GET /api/knowledge</c> reads)
+    /// and fail fast with a 400 naming exactly what was wrong, rather than letting a bad id
+    /// silently no-op deep inside the tailoring graph's forced-inclusion override.
+    /// Returns null when both lists are valid (or absent).
+    /// </summary>
+    private static async Task<IResult?> ValidateForcedInclusionIdsAsync(
+        TailorRequest request, IKnowledgeBaseReader knowledgeBaseReader, CancellationToken ct)
+    {
+        var pinned = request.PinnedEntryIds ?? [];
+        var excluded = request.ExcludedEntryIds ?? [];
+
+        if (pinned.Count == 0 && excluded.Count == 0)
+        {
+            return null;
+        }
+
+        var both = pinned.Intersect(excluded, StringComparer.Ordinal).ToList();
+        if (both.Count > 0)
+        {
+            return ProblemResults.BadRequest(
+                $"The following id(s) appear in both pinnedEntryIds and excludedEntryIds: {string.Join(", ", both)}.");
+        }
+
+        var snapshot = await knowledgeBaseReader.ReadAsync(ct).ConfigureAwait(false);
+        var knownIds = new HashSet<string>(snapshot.Items.Select(i => i.Id.ToString()), StringComparer.Ordinal);
+
+        var unknown = pinned.Concat(excluded)
+            .Distinct(StringComparer.Ordinal)
+            .Where(id => !knownIds.Contains(id))
+            .ToList();
+
+        return unknown.Count > 0
+            ? ProblemResults.BadRequest(
+                $"The following id(s) do not resolve to a knowledge base entry: {string.Join(", ", unknown)}.")
+            : null;
     }
 
     private static async Task<IResult> GetTraceAsync(string runId, ITailoringRunRepository repository, CancellationToken ct)

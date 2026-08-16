@@ -1,5 +1,6 @@
 using ResumeForge.Domain.Resume;
 using ResumeForge.Infrastructure.Rendering;
+using ResumeForge.Infrastructure.Tests.TestSupport;
 using Shouldly;
 using Xunit;
 
@@ -86,5 +87,70 @@ public sealed class HtmlResumeRendererTests
         var html = _renderer.Render(RenderingTestData.Document());
 
         html.ShouldContain("<strong>C#</strong>");
+    }
+
+    [Fact]
+    public void Renders_hyperlinks_for_a_project_url_and_repo_url()
+    {
+        var project = TestData.Project(
+            "prj:widget", "Widget Tool",
+            bullets: [TestData.Bullet("prj:widget#0", "Shipped it.")],
+            url: "https://widget.example.com", repoUrl: "https://github.com/jordan/widget");
+        var document = RenderingTestData.Document() with { Projects = [project] };
+
+        var html = _renderer.Render(document);
+
+        html.ShouldContain("<a href=\"https://widget.example.com\">widget.example.com</a>");
+        html.ShouldContain("<a href=\"https://github.com/jordan/widget\">github.com/jordan/widget</a>");
+    }
+
+    [Fact]
+    public void Omits_a_project_with_no_bullets_and_no_tagline()
+    {
+        var bare = TestData.Project("prj:bare", "Bare Project", new DateOnly(2021, 1, 1), new DateOnly(2022, 1, 1));
+        var document = RenderingTestData.Document() with { Projects = [bare] };
+
+        var html = _renderer.Render(document);
+
+        html.ShouldNotContain("Bare Project");
+        html.ShouldNotContain("<h2>Projects</h2>");
+    }
+
+    [Fact]
+    public void Includes_a_project_with_a_tagline_but_no_bullets()
+    {
+        var taglineOnly = TestData.Project("prj:tagline", "Tagline Project", tagline: "A one-liner with no bullets.");
+        var document = RenderingTestData.Document() with { Projects = [taglineOnly] };
+
+        var html = _renderer.Render(document);
+
+        html.ShouldContain("Tagline Project");
+        html.ShouldContain("A one-liner with no bullets.");
+        html.ShouldContain("<h2>Projects</h2>");
+    }
+
+    [Fact]
+    public void The_header_block_is_center_aligned()
+    {
+        var html = _renderer.Render(RenderingTestData.Document());
+
+        html.ShouldContain(".header { margin-bottom: 6px; text-align: center; }");
+    }
+
+    [Fact]
+    public void Default_section_order_places_education_right_after_summary()
+    {
+        var education = TestData.Education(
+            "edu:uw", "University of Washington", "B.S. Computer Science", new DateOnly(2014, 9, 1), new DateOnly(2018, 6, 1));
+        var document = RenderingTestData.Document() with { Education = [education] };
+
+        var html = _renderer.Render(document);
+
+        var summaryIdx = html.IndexOf("Summary</h2>", StringComparison.Ordinal);
+        var educationIdx = html.IndexOf("Education</h2>", StringComparison.Ordinal);
+        var skillsIdx = html.IndexOf("Skills</h2>", StringComparison.Ordinal);
+
+        summaryIdx.ShouldBeLessThan(educationIdx);
+        educationIdx.ShouldBeLessThan(skillsIdx);
     }
 }

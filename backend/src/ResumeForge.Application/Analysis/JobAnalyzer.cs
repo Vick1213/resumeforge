@@ -41,6 +41,18 @@ public sealed partial class JobAnalyzer(ISkillTaxonomy taxonomy) : IJobAnalyzer
         "The", "And", "With", "For", "Our", "You", "Your", "We", "This", "That", "Will", "Have", "Are", "Is",
         "In", "On", "Of", "To", "As", "At", "A", "An", "Be", "By", "Or", "It", "Its", "From", "Not", "Can",
         "All", "New", "Team", "Role", "Work", "Working", "About",
+
+        // Generic JD prose that reads as skill-shaped (capitalized, no punctuation) but names
+        // no technology or practice on its own — observed junk from real postings, plus
+        // obviously-equivalent inflections. Deliberately does NOT include words that name an
+        // actual practice even generically (e.g. "containerization").
+        "applications", "application", "built", "build", "building", "control", "deployed", "deploy",
+        "deployment", "engineering", "foundation", "just", "keep", "maintained", "maintain", "maintaining",
+        "production", "running", "run", "runs", "software", "takes", "take", "taking", "understand",
+        "understanding", "using", "used", "use", "uses", "ability", "abilities", "experience", "experienced",
+        "work", "working", "team", "teams", "strong", "skills", "skill", "tools", "systems", "system",
+        "services", "service", "solutions", "solution", "knowledge", "familiarity", "proficiency", "proficient",
+        "pipelines", "pipeline", "plus",
     };
 
     /// <summary>
@@ -242,18 +254,47 @@ public sealed partial class JobAnalyzer(ISkillTaxonomy taxonomy) : IJobAnalyzer
                     continue;
                 }
 
-                if (!taxonomy.TryCanonicalize(normalized, out var canonical) || NonSkillVerbCanonicals.Contains(canonical))
+                if (taxonomy.TryCanonicalize(normalized, out var canonical) && !NonSkillVerbCanonicals.Contains(canonical))
                 {
+                    for (var k = 0; k < span; k++)
+                    {
+                        consumed[i + k] = true;
+                    }
+
+                    found.Add(canonical);
+                    weightedSkills[canonical] = weightedSkills.GetValueOrDefault(canonical) + sectionWeight;
                     continue;
                 }
 
-                for (var k = 0; k < span; k++)
+                // A slash-joined compound is tried whole first (above) — "CI/CD" canonicalizes
+                // as a single taxonomy entry that way. But a compound like "git/GitHub" names two
+                // distinct known skills shorthand rather than one; when the whole phrase doesn't
+                // canonicalize, fall back to trying each slash-delimited part on its own. Only
+                // single-word spans are eligible, since '/' never separates space-delimited words.
+                if (span == 1 && words[i].Contains('/', StringComparison.Ordinal))
                 {
-                    consumed[i + k] = true;
-                }
+                    var matchedAnyPart = false;
 
-                found.Add(canonical);
-                weightedSkills[canonical] = weightedSkills.GetValueOrDefault(canonical) + sectionWeight;
+                    foreach (var part in words[i].Split('/', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var partNormalized = SkillNormalizer.Normalize(part);
+                        if (partNormalized.Length == 0
+                            || !taxonomy.TryCanonicalize(partNormalized, out var partCanonical)
+                            || NonSkillVerbCanonicals.Contains(partCanonical))
+                        {
+                            continue;
+                        }
+
+                        found.Add(partCanonical);
+                        weightedSkills[partCanonical] = weightedSkills.GetValueOrDefault(partCanonical) + sectionWeight;
+                        matchedAnyPart = true;
+                    }
+
+                    if (matchedAnyPart)
+                    {
+                        consumed[i] = true;
+                    }
+                }
             }
         }
 
@@ -267,8 +308,31 @@ public sealed partial class JobAnalyzer(ISkillTaxonomy taxonomy) : IJobAnalyzer
             return;
         }
 
-        foreach (var word in SkillLikeTokenPattern().Matches(text).Select(m => m.Value))
+        // SkillLikeTokenPattern doesn't include '/', so a slash-joined compound like "CI/CD"
+        // is seen here as two separate tokens ("CI", "CD"). If the whole compound was already
+        // resolved to a single taxonomy skill by ExtractSkills (e.g. "cicd"), neither half is a
+        // meaningful "unrecognized" candidate on its own — exclude the compound's whole span so
+        // its parts never reach the per-token loop below. A compound that ExtractSkills couldn't
+        // resolve as a whole (e.g. "TCP/IP") is left alone and its parts fall through to the
+        // existing per-token handling, same as before.
+        var suppressedRanges = new List<(int Start, int End)>();
+        foreach (Match compound in SlashCompoundPattern().Matches(text))
         {
+            var normalizedWhole = SkillNormalizer.Normalize(compound.Value);
+            if (normalizedWhole.Length > 0 && matchedSkills.Contains(normalizedWhole))
+            {
+                suppressedRanges.Add((compound.Index, compound.Index + compound.Length));
+            }
+        }
+
+        foreach (Match match in SkillLikeTokenPattern().Matches(text))
+        {
+            if (suppressedRanges.Any(r => match.Index >= r.Start && match.Index + match.Length <= r.End))
+            {
+                continue;
+            }
+
+            var word = match.Value;
             if (StopWords.Contains(word))
             {
                 continue;
@@ -457,4 +521,7 @@ public sealed partial class JobAnalyzer(ISkillTaxonomy taxonomy) : IJobAnalyzer
 
     [GeneratedRegex(@"[A-Za-z][A-Za-z0-9+#.]*", RegexOptions.CultureInvariant)]
     private static partial Regex SkillLikeTokenPattern();
+
+    [GeneratedRegex(@"[A-Za-z][A-Za-z0-9+#.]*(?:/[A-Za-z][A-Za-z0-9+#.]*)+", RegexOptions.CultureInvariant)]
+    private static partial Regex SlashCompoundPattern();
 }

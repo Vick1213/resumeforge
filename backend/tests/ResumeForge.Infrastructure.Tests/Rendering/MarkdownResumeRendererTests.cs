@@ -1,5 +1,6 @@
 using ResumeForge.Domain.Resume;
 using ResumeForge.Infrastructure.Rendering;
+using ResumeForge.Infrastructure.Tests.TestSupport;
 using Shouldly;
 using Xunit;
 
@@ -79,5 +80,62 @@ public sealed class MarkdownResumeRendererTests
         var markdown = _renderer.Render(RenderingTestData.Document());
 
         markdown.ShouldStartWith("# Jordan Rivera");
+    }
+
+    [Fact]
+    public void Includes_a_projects_url_and_repo_url_when_present()
+    {
+        var project = TestData.Project(
+            "prj:widget", "Widget Tool",
+            bullets: [TestData.Bullet("prj:widget#0", "Shipped it.")],
+            url: "https://widget.example.com", repoUrl: "https://github.com/jordan/widget");
+        var document = RenderingTestData.Document() with { Projects = [project] };
+
+        var markdown = _renderer.Render(document);
+
+        markdown.ShouldContain("https://widget.example.com");
+        markdown.ShouldContain("https://github.com/jordan/widget");
+    }
+
+    [Fact]
+    public void Omits_a_project_with_no_bullets_and_no_tagline()
+    {
+        var bare = TestData.Project("prj:bare", "Bare Project", new DateOnly(2021, 1, 1), new DateOnly(2022, 1, 1));
+        var document = RenderingTestData.Document() with { Projects = [bare] };
+
+        var markdown = _renderer.Render(document);
+
+        markdown.ShouldNotContain("Bare Project");
+        markdown.ShouldNotContain("## Projects");
+    }
+
+    [Fact]
+    public void Includes_a_project_with_a_tagline_but_no_bullets()
+    {
+        var taglineOnly = TestData.Project("prj:tagline", "Tagline Project", tagline: "A one-liner with no bullets.");
+        var document = RenderingTestData.Document() with { Projects = [taglineOnly] };
+
+        var markdown = _renderer.Render(document);
+
+        markdown.ShouldContain("Tagline Project");
+        markdown.ShouldContain("A one-liner with no bullets.");
+        markdown.ShouldContain("## Projects");
+    }
+
+    [Fact]
+    public void Default_section_order_places_education_right_after_summary()
+    {
+        var education = TestData.Education(
+            "edu:uw", "University of Washington", "B.S. Computer Science", new DateOnly(2014, 9, 1), new DateOnly(2018, 6, 1));
+        var document = RenderingTestData.Document() with { Education = [education] };
+
+        var markdown = _renderer.Render(document);
+
+        var summaryIdx = markdown.IndexOf("## Summary", StringComparison.Ordinal);
+        var educationIdx = markdown.IndexOf("## Education", StringComparison.Ordinal);
+        var skillsIdx = markdown.IndexOf("## Skills", StringComparison.Ordinal);
+
+        summaryIdx.ShouldBeLessThan(educationIdx);
+        educationIdx.ShouldBeLessThan(skillsIdx);
     }
 }

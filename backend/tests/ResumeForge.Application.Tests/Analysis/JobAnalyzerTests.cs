@@ -280,4 +280,69 @@ public sealed class JobAnalyzerTests
 
         analysis.MatchedSkills.ShouldContain("mentoring");
     }
+
+    [Fact]
+    public void Generic_JD_prose_requirement_contributes_no_missing_skill_candidates()
+    {
+        const string jd = """
+            Requirements
+            - Just keep production applications running and understand our software engineering foundation
+            """;
+
+        var analysis = NewAnalyzer().Analyze(TestData.Posting(rawText: jd));
+
+        analysis.MissingSkills.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Slash_joined_ci_cd_matches_the_taxonomy_whole_and_is_not_split_into_missing_skills()
+    {
+        const string jd = """
+            Requirements
+            - Experience with CI/CD pipelines
+            """;
+
+        var analysis = NewAnalyzer().Analyze(TestData.Posting(rawText: jd));
+
+        analysis.MatchedSkills.ShouldContain("cicd");
+        analysis.MissingSkills.ShouldNotContain("ci");
+        analysis.MissingSkills.ShouldNotContain("cd");
+    }
+
+    [Fact]
+    public void Git_and_github_required_are_recognized_by_the_taxonomy_and_excluded_from_missing()
+    {
+        var taxonomy = new FakeSkillTaxonomy().Add("git", "tools", "git").Add("github", "tools", "github");
+        const string jd = """
+            Requirements
+            - git and GitHub required
+            """;
+
+        var analysis = new JobAnalyzer(taxonomy).Analyze(TestData.Posting(rawText: jd));
+
+        analysis.MissingSkills.ShouldNotContain("git");
+        analysis.MissingSkills.ShouldNotContain("github");
+    }
+
+    [Fact]
+    public void Slash_joined_git_github_are_each_detected_as_matched_skills_and_excluded_from_missing()
+    {
+        // Regression: a shorthand compound like "git/GitHub" names two distinct known skills,
+        // unlike "CI/CD" which is itself one taxonomy entry. ExtractSkills must fall back to
+        // trying each slash-delimited part when the whole compound doesn't canonicalize, or
+        // CollectMissingSkillCandidates has no record that "git" and "github" were recognized
+        // and both leak into MissingSkills.
+        var taxonomy = new FakeSkillTaxonomy().Add("git", "tools", "git").Add("github", "tools", "github");
+        const string jd = """
+            Requirements
+            - git/GitHub required
+            """;
+
+        var analysis = new JobAnalyzer(taxonomy).Analyze(TestData.Posting(rawText: jd));
+
+        analysis.MatchedSkills.ShouldContain("git");
+        analysis.MatchedSkills.ShouldContain("github");
+        analysis.MissingSkills.ShouldNotContain("git");
+        analysis.MissingSkills.ShouldNotContain("github");
+    }
 }

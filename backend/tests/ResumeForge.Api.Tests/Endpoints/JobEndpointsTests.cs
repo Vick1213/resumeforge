@@ -40,6 +40,38 @@ public sealed class JobEndpointsTests(ResumeForgeApiFactory factory)
     }
 
     [Fact]
+    public async Task Create_from_raw_text_with_a_qualifying_first_line_extracts_the_title()
+    {
+        using var client = factory.CreateClient();
+
+        const string rawText =
+            "Senior Backend Engineer\n" +
+            "Acme Corp is hiring a Senior Backend Engineer to join our platform team.";
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/jobs", new CreateJobRequest { RawText = rawText }, TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Created);
+        var posting = await response.Content.ReadFromJsonAsync<JobPosting>(TestJson.Options);
+        posting.ShouldNotBeNull();
+        posting.Title.ShouldBe("Senior Backend Engineer");
+    }
+
+    [Fact]
+    public async Task Create_from_raw_text_with_no_qualifying_line_leaves_the_title_null()
+    {
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/jobs", new CreateJobRequest { RawText = SamplePosting }, TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Created);
+        var posting = await response.Content.ReadFromJsonAsync<JobPosting>(TestJson.Options);
+        posting.ShouldNotBeNull();
+        posting.Title.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task Create_without_url_or_rawtext_returns_400()
     {
         using var client = factory.CreateClient();

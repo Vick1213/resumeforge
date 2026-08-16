@@ -489,6 +489,29 @@ export interface TailorRequest {
   effort?: ModelEffort;
   /** Derived from `effort` when omitted; an explicit value here wins over the preset. */
   maxRewrites?: number;
+  /**
+   * Bounds the rendered result to this many pages (CONTRACTS.md §6 "Page budget").
+   * Defaults to 2 server-side when omitted; an explicit `null` disables page-budget
+   * trimming entirely. Hand-edited pending `npm run generate:api`, which currently
+   * requires a running backend to regenerate this file.
+   */
+  maxPages?: number | null;
+  /**
+   * Knowledge-item ids (e.g. `prj:market-terminal`) forced into the tailored
+   * resume regardless of automatic relevance scoring. Omit or empty = no
+   * forcing. Backend returns 400 if an id is unknown or also appears in
+   * `excludedEntryIds`. Hand-edited pending `npm run generate:api`, which
+   * currently requires a running backend to regenerate this file.
+   */
+  pinnedEntryIds?: string[];
+  /**
+   * Knowledge-item ids forced out of the tailored resume regardless of
+   * automatic relevance scoring. Omit or empty = no forcing. Backend returns
+   * 400 if an id is unknown or also appears in `pinnedEntryIds`. Hand-edited
+   * pending `npm run generate:api`, which currently requires a running
+   * backend to regenerate this file.
+   */
+  excludedEntryIds?: string[];
   dryRun: boolean;
 }
 

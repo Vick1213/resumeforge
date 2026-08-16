@@ -96,6 +96,9 @@ public sealed class TailoringGraphFactory(
         {
             MaxRewrites = request.Effort.ResolveMaxRewrites(request.MaxRewrites),
             Effort = request.Effort,
+            MaxPages = request.MaxPages,
+            PinnedEntryIds = request.PinnedEntryIds ?? [],
+            ExcludedEntryIds = request.ExcludedEntryIds ?? [],
         };
 
         return new GraphBuilder()
@@ -141,10 +144,19 @@ public sealed class TailoringGraphFactory(
             {
                 var analysis = ctx.Get<JobAnalysis>(AnalyzeJd);
                 var baseDoc = ctx.Get<ResumeDocument>(BuildBase);
+
+                // Force-excluded entries (CONTRACTS.md §6 "Forced inclusion") are dropped
+                // from the model's candidate pool here rather than left for it to propose
+                // excluding on its own: ExecuteCommands would override that decision anyway,
+                // so offering the candidate at all just spends the model's limited command
+                // budget on a foregone conclusion. Scoring (score-experience/score-projects,
+                // upstream of this node) still runs over the whole base document, since
+                // PageBudgetEnforcer's relevance ranking needs every entry's score regardless
+                // of forced status.
                 var candidates = new CandidateSet
                 {
-                    Experience = ctx.Get<IReadOnlyList<ScoredCandidate>>(ScoreExperience),
-                    Projects = ctx.Get<IReadOnlyList<ScoredCandidate>>(ScoreProjects),
+                    Experience = ExcludeForcedEntries(ctx.Get<IReadOnlyList<ScoredCandidate>>(ScoreExperience), options.ExcludedEntryIds),
+                    Projects = ExcludeForcedEntries(ctx.Get<IReadOnlyList<ScoredCandidate>>(ScoreProjects), options.ExcludedEntryIds),
                     Skills = ctx.Get<IReadOnlyList<ScoredCandidate>>(ScoreSkills),
                 };
 
@@ -208,7 +220,26 @@ public sealed class TailoringGraphFactory(
             {
                 var doc = ctx.Get<ResumeDocument>(BuildBase);
                 var validation = ctx.Get<CommandValidationResult>(ValidateCommands);
-                return Task.FromResult<object?>(commandExecutor.Execute(doc, validation.Accepted));
+                var executed = commandExecutor.Execute(doc, validation.Accepted);
+
+                // Deterministic headline override (CONTRACTS.md §2 "Tailored headline"),
+                // applied here — after execution, before enforce-page-budget and render see
+                // the document — using the job posting FetchJd already produced. ValidateCommands
+                // transitively depends on FetchJd via BuildBrief/the score-* nodes/AnalyzeJd,
+                // so its result is already present without a direct edge, the same way this
+                // node already reads BuildBase's document above.
+                var posting = ctx.Get<JobPosting>(FetchJd);
+                executed = executed with { Document = ApplyTailoredHeadline(executed.Document, posting.Title) };
+
+                // Forced pins/excludes (CONTRACTS.md §6 "Forced inclusion") are applied last,
+                // after every model command has run, so they always win regardless of what
+                // include/exclude commands the model proposed.
+                executed = executed with
+                {
+                    Document = ApplyForcedInclusion(executed.Document, options.PinnedEntryIds, options.ExcludedEntryIds),
+                };
+
+                return Task.FromResult<object?>(executed);
             })
             .DependsOn(ValidateCommands)
             .Critical()
@@ -275,6 +306,87 @@ public sealed class TailoringGraphFactory(
         return effort == ModelEffort.Maximum
             ? prompt + " Always propose a setSummary command tailored specifically to this job."
             : prompt;
+    }
+
+    /// <summary>
+    /// Deterministic headline override (CONTRACTS.md §2 "Tailored headline"): when
+    /// <paramref name="jobTitle"/> was determined at ingest, <paramref name="document"/>'s
+    /// headline becomes that title, trimmed and with internal whitespace runs collapsed to
+    /// single spaces — never otherwise rewritten. When <paramref name="jobTitle"/> is null
+    /// or blank, <paramref name="document"/> is returned unchanged and the profile
+    /// headline <c>build-base</c> copied from the knowledge base stands. Internal so it is
+    /// unit-testable without running the whole graph.
+    /// </summary>
+    internal static ResumeDocument ApplyTailoredHeadline(ResumeDocument document, string? jobTitle)
+    {
+        if (string.IsNullOrWhiteSpace(jobTitle))
+        {
+            return document;
+        }
+
+        var normalized = string.Join(' ', jobTitle.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return document with { Basics = document.Basics with { Headline = normalized } };
+    }
+
+    /// <summary>
+    /// Deterministic forced-inclusion override (CONTRACTS.md §6 "Forced inclusion"): after
+    /// every model command has been applied, an id in <paramref name="pinnedEntryIds"/> has
+    /// its entry's <c>Included</c> flag forced to <see langword="true"/>, and an id in
+    /// <paramref name="excludedEntryIds"/> has it forced to <see langword="false"/> —
+    /// regardless of what the model's include/exclude commands decided. Works generically
+    /// across every entry kind that carries an <c>Included</c> flag (<c>exp:</c>, <c>prj:</c>,
+    /// <c>edu:</c>, <c>cert:</c>); an id that doesn't match any entry in
+    /// <paramref name="document"/> is silently ignored here — the endpoint validates ids
+    /// resolve to a real knowledge-base entry before a run ever starts, and the two lists are
+    /// mutually exclusive by the same pre-flight check, so this never has to arbitrate a
+    /// conflict. A null or empty pair of lists is a no-op that returns <paramref name="document"/>
+    /// unchanged. Internal so it is unit-testable without running the whole graph, the same
+    /// way <see cref="ApplyTailoredHeadline"/> is.
+    /// </summary>
+    internal static ResumeDocument ApplyForcedInclusion(
+        ResumeDocument document, IReadOnlyList<string>? pinnedEntryIds, IReadOnlyList<string>? excludedEntryIds)
+    {
+        var pinned = pinnedEntryIds is { Count: > 0 } ? new HashSet<string>(pinnedEntryIds, StringComparer.Ordinal) : null;
+        var excluded = excludedEntryIds is { Count: > 0 } ? new HashSet<string>(excludedEntryIds, StringComparer.Ordinal) : null;
+
+        if (pinned is null && excluded is null)
+        {
+            return document;
+        }
+
+        bool? Resolve(string id) =>
+            pinned?.Contains(id) == true ? true :
+            excluded?.Contains(id) == true ? false :
+            null;
+
+        return document with
+        {
+            Experience = [.. document.Experience.Select(e => Resolve(e.Id) is { } inc ? e with { Included = inc } : e)],
+            Projects = [.. document.Projects.Select(p => Resolve(p.Id) is { } inc ? p with { Included = inc } : p)],
+            Education = [.. document.Education.Select(e => Resolve(e.Id) is { } inc ? e with { Included = inc } : e)],
+            Certifications = [.. document.Certifications.Select(c => Resolve(c.Id) is { } inc ? c with { Included = inc } : c)],
+        };
+    }
+
+    /// <summary>
+    /// Drops candidates belonging to a force-excluded entry (CONTRACTS.md §6 "Forced
+    /// inclusion") from a scored candidate list before it reaches <see cref="IBriefBuilder"/>,
+    /// so the model never spends a decision on an entry <see cref="ApplyForcedInclusion"/>
+    /// will exclude regardless of what it proposes. <paramref name="candidates"/> carries
+    /// bullet-level ids (e.g. <c>exp:acme#0</c>); <see cref="Domain.Ids.EntityId.Parent"/>
+    /// maps each back to its owning entry id the same way <see cref="PageBudgetEnforcer"/>'s
+    /// own entry-scoring already relies on.
+    /// </summary>
+    private static IReadOnlyList<ScoredCandidate> ExcludeForcedEntries(
+        IReadOnlyList<ScoredCandidate> candidates, IReadOnlyList<string> excludedEntryIds)
+    {
+        if (excludedEntryIds.Count == 0)
+        {
+            return candidates;
+        }
+
+        var excluded = new HashSet<string>(excludedEntryIds, StringComparer.Ordinal);
+        return [.. candidates.Where(c => !(EntityId.TryParse(c.EntityId, out var id) && excluded.Contains(id.Parent.ToString())))];
     }
 
     private FabricationVerification VerifyFabricationOf(ResumeDocument doc, CommandValidationResult validation)

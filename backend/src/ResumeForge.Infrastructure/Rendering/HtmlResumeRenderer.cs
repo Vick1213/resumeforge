@@ -167,7 +167,7 @@ public sealed class HtmlResumeRenderer
 
     private static void AppendProjects(StringBuilder sb, IReadOnlyList<ProjectEntry> entries)
     {
-        var included = entries.Where(e => e.Included).ToList();
+        var included = entries.Where(e => e.Included && e.HasRenderableContent()).ToList();
         if (included.Count == 0)
         {
             return;
@@ -335,7 +335,7 @@ public sealed class HtmlResumeRenderer
           font-size: 14px;
         }
         .resume { max-width: 780px; margin: 0 auto; padding: 24px 32px 36px; }
-        .header { margin-bottom: 6px; }
+        .header { margin-bottom: 6px; text-align: center; }
         .header h1 { margin: 0 0 1px; font-size: 19px; letter-spacing: 0.2px; }
         .headline { margin: 0 0 2px; color: var(--accent); font-weight: 600; font-size: 11px; }
         .contact { margin: 0; color: var(--muted); font-size: 9px; }

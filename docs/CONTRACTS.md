@@ -159,6 +159,15 @@ public sealed record Skill
 }
 ```
 
+### Tailored headline
+
+A tailoring run's `Basics.Headline` is a deterministic override — never a model decision.
+When the job's title (`JobPosting.Title`, §4) was determined at ingest, the tailored
+document's headline becomes that title, trimmed and with internal whitespace runs
+collapsed to single spaces; it is otherwise used verbatim, never rewritten. When `Title`
+is null or blank, `Basics.Headline` keeps the profile headline `build-base` copied from
+the knowledge base.
+
 ---
 
 ## 3. Knowledge base markdown format
@@ -451,6 +460,71 @@ build time and never recomputed — an excluded bullet's ID does not get reused 
 former siblings. `exp:acme#0, exp:acme#1, exp:acme#2` with `#1` excluded renders two
 bullets that keep the IDs `#0` and `#2`. Executors must not renumber.
 
+### Forced inclusion — user pins and excludes override the model
+
+`TailorRequest.PinnedEntryIds` and `TailorRequest.ExcludedEntryIds` (§9) let the user force
+specific entries into or out of the tailored resume, overriding both the model's
+include/exclude commands and `PageBudgetEnforcer`'s trimming. Both target entry ids only
+(`exp:`, `prj:`, `edu:`, `cert:` — never a bullet or skill id), and both are generic across
+every entry kind even though the UI initially only sends `prj:` ids.
+
+- **Pins** (`PinnedEntryIds`): after command execution, the entry's `Included` is forced to
+  `true` regardless of what the model commanded, and it is added to the page-budget floor —
+  see "Page budget" below.
+- **Forced excludes** (`ExcludedEntryIds`): after command execution, the entry's `Included`
+  is forced to `false` regardless of what the model commanded. A force-excluded entry's
+  candidates are also dropped from the brief before the model ever sees them, so it never
+  spends a decision on an entry whose outcome is already fixed.
+- **Validation**: an id present in both lists is rejected — the request fails with 400,
+  never resolved by one list silently winning. An id that does not resolve to a real
+  knowledge-base entry fails the same way, naming every offending id in the response.
+  Validation runs pre-flight in the endpoint, the same way an unknown `JobId`/`BaseResumeId`
+  is checked before the tailoring graph ever runs.
+- Null or empty means no forcing, for either list — every pre-existing request shape
+  continues to behave exactly as before.
+
+### Rendering
+
+Beyond `Included == false`, all three renderers (`PdfResumeRenderer`, `HtmlResumeRenderer`,
+`MarkdownResumeRenderer`) apply one more presentation-only rule: **a project entry with an
+empty `Bullets` list and a null-or-blank `Tagline` is omitted from rendered output.** Such
+an entry has nothing to show beyond a name and date range, which renders as a bare,
+broken-looking line. The entry is untouched in the document model — the diff, coverage
+report, and UI still see it — this only decides what a render produces. If every included
+project is contentless this way, the PROJECTS heading itself is omitted too, exactly as
+when there are no included project entries at all.
+
+The PDF renderer additionally makes the header contact line and project links clickable,
+matching what the HTML renderer already does with `<a>` tags. In the header, email links to
+`mailto:{email}`; website, LinkedIn, and GitHub link to their full stored URL. In a project
+entry's title row, `Url` and `RepoUrl` (when present) render as hyperlinks appended after
+the name, in that order. Every hyperlink's *display* text is scheme-stripped and
+`www.`-stripped the same way the plain contact line always has been (`https://example.com/`
+shows as `example.com`); the link *target* is always the full, untouched URL. Only
+clickability changes — font size and color are identical to the surrounding plain text.
+
+`ResumeBuilder`'s default `SectionOrder` is `Summary, Education, Skills, Experience,
+Projects, Certifications` — education sits right after the summary rather than at the end,
+so a candidate's degree isn't buried below every job and side project. This is only the
+default: `SetSectionOrderCommand` still reorders freely, and every renderer follows
+whatever `SectionOrder` the document carries, not this list.
+
+Skill groups follow one more rule at build time, in `ResumeBuilder.BuildSkillGroups`: a
+taxonomy category left with **exactly one** skill after normalization is folded into the
+trailing "Other" group instead of rendering as its own single-item row (a full labeled line
+for one skill — "Practices: CI/CD" — reads as broken, not concise). "Other" itself is exempt
+from folding, since it is the fold's destination. Categories with two or more skills are
+unaffected.
+
+In the PDF and HTML renderers, the header — name, headline, and contact line — is
+horizontally centered rather than left-aligned; Markdown has no alignment concept and is
+unaffected. The PDF renderer also disables the OpenType "liga" (standard ligatures) font
+feature document-wide: a subsetted PDF font's ligature glyph (e.g. the merged "ft" in
+"Software") commonly has no `ToUnicode` entry mapping it back to its source letters, so an
+ATS parser extracting text from an unmodified PDF sees "So�ware" instead. Disabling
+ligatures trades a minor typographic nicety for text that copy-pastes and parses correctly,
+which matters more on a document whose main job is to survive automated screening.
+
 ### Command validation (`ICommandValidator`) — runs before execution
 
 A command is **rejected**, not clamped, if it fails any of these. Rejections are
@@ -544,6 +618,11 @@ Two rules constrain what may be cut:
 - **The floor is never crossed**: basics, and the single highest-scoring experience
   entry, are never excluded to satisfy a budget. If a document cannot fit even at the
   floor, it is rendered over budget rather than mutilated, and the result says so.
+  `TailorRequest.PinnedEntryIds` (see "Forced inclusion" above) extends the floor: every
+  pinned entry, of any cuttable kind, joins the highest-scoring experience entry as never a
+  cut candidate. If the floor plus every pin still doesn't fit, the same rule applies —
+  rendered over budget, `FitsBudget = false` — rather than cutting a pinned entry to make
+  it fit.
 
 Every entry dropped this way is reported as a `ResumeDiffEntry` with `Kind = Excluded`
 and a `Rationale` naming the budget, so a cut is never silent — the user can see exactly
@@ -828,6 +907,13 @@ Scalar UI at `/docs`. All errors use RFC 9457 `ProblemDetails`.
 
 \* `docx` may return 501 in v1; `pdf`, `html`, `md` are required.
 
+For the pasted-`rawText` branch of `POST /api/jobs` (no fetcher runs, so `Title`/`Company`
+are otherwise never set), `JobPosting.Title` is filled in by
+`PastedJobTitleExtractor.Extract` (`ResumeForge.Application.Analysis`) — a deterministic
+scan of the first 10 non-blank lines for an explicit "Title:"-style label or a short,
+role-keyword-bearing line. It is conservative on purpose: the title becomes the tailored
+resume's headline, so a miss (`null`) is preferred over a wrong guess.
+
 ```csharp
 public sealed record TailorRequest
 {
@@ -837,6 +923,8 @@ public sealed record TailorRequest
     public int? MaxRewrites { get; init; }         // null → derived from Effort; set wins
     public int? MaxPages { get; init; } = 2;       // null → unbounded; see Page budget
     public bool DryRun { get; init; }              // validate + trace, don't persist
+    public IReadOnlyList<string>? PinnedEntryIds { get; init; }    // forced in; see Forced inclusion
+    public IReadOnlyList<string>? ExcludedEntryIds { get; init; }  // forced out; see Forced inclusion
 }
 ```
 
@@ -1044,7 +1132,9 @@ beyond Radix primitives. Routes:
 - `/` — dashboard: KB counts, recent tailoring runs, application funnel
 - `/knowledge` — list + markdown editor with live frontmatter validation
 - `/knowledge/import` — GitHub import (pick repos → preview generated markdown → commit)
-- `/tailor` — paste JD URL/text → live graph trace → diff view → export
+- `/tailor` — paste JD URL/text → live graph trace → diff view → export;
+  a page-limit control (1 or 2 pages) maps directly to `TailorRequest.MaxPages`;
+  a per-project Auto/Always/Never control maps to `TailorRequest.PinnedEntryIds`/`ExcludedEntryIds`
 - `/applications` — tracker board
 - `/settings` — profile basics, API key presence (never the value), model selection
 

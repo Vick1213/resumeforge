@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { BookmarkCheck, BookmarkPlus, Sparkles } from 'lucide-react';
-import { useCreateApplication, useCreateJob, useJobAnalysis, useTailor } from '@/api/queries';
+import { useCreateApplication, useCreateJob, useJobAnalysis, useKnowledge, useTailor } from '@/api/queries';
 import type { JobPosting, ModelEffort, SeniorityLevel } from '@/api/types';
 import { DEFAULT_EFFORT } from '@/lib/effort';
 import { Badge } from '@/components/ui/Badge';
@@ -18,6 +18,10 @@ import { CoveragePanel } from '@/components/tailor/CoveragePanel';
 import { DiffView } from '@/components/tailor/DiffView';
 import { CommandsPanel } from '@/components/tailor/CommandsPanel';
 import { EffortControl } from '@/components/tailor/EffortControl';
+import { PageBudgetControl } from '@/components/tailor/PageBudgetControl';
+import type { PageBudget } from '@/components/tailor/PageBudgetControl';
+import { ProjectSelectionPanel } from '@/components/tailor/ProjectSelectionPanel';
+import type { ProjectSelectionState } from '@/components/tailor/ProjectSelectionPanel';
 import { TokenUsagePanel } from '@/components/tailor/TokenUsagePanel';
 import { ExportButtons } from '@/components/tailor/ExportButtons';
 
@@ -36,10 +40,13 @@ export default function Tailor() {
   const [urlValue, setUrlValue] = useState('');
   const [textValue, setTextValue] = useState('');
   const [effort, setEffort] = useState<ModelEffort>(DEFAULT_EFFORT);
+  const [maxPages, setMaxPages] = useState<PageBudget>(2);
+  const [selection, setSelection] = useState<Record<string, ProjectSelectionState>>({});
   const [job, setJob] = useState<JobPosting | undefined>(undefined);
 
   const createJob = useCreateJob();
   const jobAnalysis = useJobAnalysis(job?.id);
+  const knowledge = useKnowledge();
   const tailor = useTailor();
   const createApplication = useCreateApplication();
 
@@ -58,7 +65,20 @@ export default function Tailor() {
 
   function handleRunTailor(): void {
     if (!job) return;
-    tailor.mutate({ jobId: job.id, effort, dryRun: false });
+    const pinnedEntryIds = Object.entries(selection)
+      .filter(([, state]) => state === 'always')
+      .map(([id]) => id);
+    const excludedEntryIds = Object.entries(selection)
+      .filter(([, state]) => state === 'never')
+      .map(([id]) => id);
+    tailor.mutate({
+      jobId: job.id,
+      effort,
+      maxPages,
+      dryRun: false,
+      ...(pinnedEntryIds.length > 0 ? { pinnedEntryIds } : {}),
+      ...(excludedEntryIds.length > 0 ? { excludedEntryIds } : {}),
+    });
   }
 
   function handleSaveApplication(): void {
@@ -164,7 +184,7 @@ export default function Tailor() {
                 </div>
                 {jobAnalysis.data.missingSkills.length > 0 && (
                   <p className="text-xs text-[var(--warning)]">
-                    Missing from your knowledge base: {jobAnalysis.data.missingSkills.join(', ')}
+                    Not recognized as skills: {jobAnalysis.data.missingSkills.join(', ')}
                   </p>
                 )}
                 <div className="flex flex-col gap-3 border-t border-[var(--border)] pt-4">
@@ -178,6 +198,19 @@ export default function Tailor() {
                     </Button>
                   </div>
                   <EffortControl value={effort} onChange={setEffort} />
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                    Page limit
+                  </h3>
+                  <PageBudgetControl value={maxPages} onChange={setMaxPages} />
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                    Projects
+                  </h3>
+                  <ProjectSelectionPanel
+                    items={knowledge.data ?? []}
+                    value={selection}
+                    onChange={(itemId, state) => setSelection((prev) => ({ ...prev, [itemId]: state }))}
+                    onReset={() => setSelection({})}
+                  />
                 </div>
               </>
             )}

@@ -25,6 +25,21 @@ public sealed record TailoringRequest
     /// own default; an explicit <c>null</c> disables page-budget trimming entirely.
     /// </summary>
     public int? MaxPages { get; init; } = 2;
+
+    /// <summary>
+    /// Entry ids (<c>exp:</c>, <c>prj:</c>, <c>edu:</c>, <c>cert:</c>) forced into the
+    /// tailored resume regardless of the model's commands or the page-budget trimmer
+    /// (CONTRACTS.md §6 "Forced inclusion"). Null or empty means no forcing.
+    /// </summary>
+    public IReadOnlyList<string>? PinnedEntryIds { get; init; }
+
+    /// <summary>
+    /// Entry ids forced out of the tailored resume regardless of the model's commands
+    /// (CONTRACTS.md §6 "Forced inclusion"). Null or empty means no forcing. An id present
+    /// in both this list and <see cref="PinnedEntryIds"/> is rejected by the endpoint before
+    /// a run ever starts.
+    /// </summary>
+    public IReadOnlyList<string>? ExcludedEntryIds { get; init; }
 }
 
 /// <summary>

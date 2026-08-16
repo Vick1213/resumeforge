@@ -34,6 +34,13 @@ public sealed class PdfResumeRenderer
     /// </summary>
     private const int PageCountRasterDpi = 72;
 
+    /// <summary>
+    /// The document-wide line height multiplier. 1.0 read as visibly cramped; no test in this
+    /// suite pins a page count against real rendered content, so 1.15 (the top of the
+    /// requested 1.05–1.15 range) is used outright rather than backed off.
+    /// </summary>
+    private const float BaseLineHeight = 1.15f;
+
     /// <summary>Renders <paramref name="doc"/> to PDF, alongside the resulting page count.</summary>
     public PdfRenderResult Render(ResumeDocument doc)
     {
@@ -54,7 +61,15 @@ public sealed class PdfResumeRenderer
             {
                 page.Size(PageSizes.Letter);
                 page.Margin(0.25f, Unit.Inch);
-                page.DefaultTextStyle(x => x.FontSize(9f).FontColor(InkColor).LineHeight(1.0f));
+
+                // Ligatures ("fi", "ft", "ti"...) are a display nicety that subsetted PDF
+                // fonts pay for at ATS's expense: the glyph a ligature draws often has no
+                // ToUnicode mapping back to its source letters, so "Software" and "Entity"
+                // extract as "So�ware" and "En�ty". Disabled globally — every text element in
+                // the document inherits this — since no amount of visual polish is worth an
+                // ATS parser mangling the resume's own words.
+                page.DefaultTextStyle(x => x.FontSize(9f).FontColor(InkColor).LineHeight(BaseLineHeight)
+                    .DisableFontFeature(FontFeatures.StandardLigatures));
 
                 page.Content().Column(column =>
                 {
@@ -93,27 +108,72 @@ public sealed class PdfResumeRenderer
 
     private static void ComposeHeader(ColumnDescriptor column, ResumeBasics basics)
     {
-        column.Item().Text(basics.FullName).FontSize(17f).Bold().FontColor(InkColor);
+        column.Item().Text(basics.FullName).FontSize(17f).Bold().FontColor(InkColor).AlignCenter();
 
         if (!string.IsNullOrWhiteSpace(basics.Headline))
         {
-            column.Item().Text(basics.Headline).FontSize(10f).SemiBold().FontColor(AccentColor);
+            column.Item().Text(basics.Headline).FontSize(10f).SemiBold().FontColor(AccentColor).AlignCenter();
         }
 
-        var contact = string.Join("   ·   ", ContactParts(basics));
-        if (contact.Length > 0)
+        var parts = ContactParts(basics).ToList();
+        if (parts.Count > 0)
         {
-            column.Item().Text(contact).FontSize(8f).FontColor(MutedColor);
+            column.Item().Text(text =>
+            {
+                text.AlignCenter();
+
+                // Every span in this block — plain or hyperlinked — carries the same size and
+                // color, so turning a field into a link changes nothing but its clickability.
+                text.DefaultTextStyle(x => x.FontSize(8f).FontColor(MutedColor));
+
+                for (var i = 0; i < parts.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        text.Span("   ·   ");
+                    }
+
+                    var (display, href) = parts[i];
+                    if (href is null)
+                    {
+                        text.Span(display);
+                    }
+                    else
+                    {
+                        text.Hyperlink(display, href);
+                    }
+                }
+            });
         }
     }
 
-    private static IEnumerable<string> ContactParts(ResumeBasics basics)
+    /// <summary>
+    /// The header contact fields in display order, each paired with the URL it should link to
+    /// (a <c>mailto:</c> link for email, the full original URL for website/LinkedIn/GitHub),
+    /// or a null href for fields that stay plain text (phone, location).
+    /// </summary>
+    private static IEnumerable<(string Display, string? Href)> ContactParts(ResumeBasics basics)
     {
-        foreach (var value in new[] { basics.Email, basics.Phone, basics.Location, basics.Website, basics.LinkedIn, basics.GitHub })
+        if (!string.IsNullOrWhiteSpace(basics.Email))
         {
-            if (!string.IsNullOrWhiteSpace(value))
+            yield return (ForDisplay(basics.Email), $"mailto:{basics.Email.Trim()}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(basics.Phone))
+        {
+            yield return (ForDisplay(basics.Phone), null);
+        }
+
+        if (!string.IsNullOrWhiteSpace(basics.Location))
+        {
+            yield return (ForDisplay(basics.Location), null);
+        }
+
+        foreach (var url in new[] { basics.Website, basics.LinkedIn, basics.GitHub })
+        {
+            if (!string.IsNullOrWhiteSpace(url))
             {
-                yield return ForDisplay(value);
+                yield return (ForDisplay(url), url.Trim());
             }
         }
     }
@@ -227,7 +287,7 @@ public sealed class PdfResumeRenderer
 
     private static void ComposeProjects(ColumnDescriptor column, IReadOnlyList<ProjectEntry> entries)
     {
-        var included = entries.Where(e => e.Included).ToList();
+        var included = entries.Where(e => e.Included && e.HasRenderableContent()).ToList();
         if (included.Count == 0)
         {
             return;
@@ -241,7 +301,21 @@ public sealed class PdfResumeRenderer
             {
                 entryColumn.Item().Row(row =>
                 {
-                    row.RelativeItem().Text(entry.Name).Bold();
+                    row.RelativeItem().Text(text =>
+                    {
+                        text.Span(entry.Name).Bold();
+
+                        foreach (var url in new[] { entry.Url, entry.RepoUrl })
+                        {
+                            if (string.IsNullOrWhiteSpace(url))
+                            {
+                                continue;
+                            }
+
+                            text.Span("   ·   ").FontSize(8f).FontColor(MutedColor);
+                            text.Hyperlink(ForDisplay(url), url.Trim()).FontSize(8f).FontColor(MutedColor);
+                        }
+                    });
 
                     var range = FormatOptionalRange(entry.StartDate, entry.EndDate);
                     if (range is not null)
@@ -252,7 +326,9 @@ public sealed class PdfResumeRenderer
 
                 if (!string.IsNullOrWhiteSpace(entry.Tagline))
                 {
-                    entryColumn.Item().Text(entry.Tagline).FontSize(9).FontColor(MutedColor);
+                    // Italic gives each project entry a visible rhythm: bold name (+ links),
+                    // italic tagline, plain bullets.
+                    entryColumn.Item().Text(entry.Tagline).FontSize(9).FontColor(MutedColor).Italic();
                 }
 
                 ComposeBullets(entryColumn, entry.Bullets.Select(b => b.Text));

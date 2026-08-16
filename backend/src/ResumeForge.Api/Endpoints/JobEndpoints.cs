@@ -46,6 +46,7 @@ public static class JobEndpoints
                 Id = Guid.NewGuid().ToString(),
                 SourceUrl = $"pasted:{Guid.NewGuid()}",
                 RawText = request.RawText!,
+                Title = PastedJobTitleExtractor.Extract(request.RawText),
                 FetchedAt = timeProvider.GetUtcNow(),
             };
 

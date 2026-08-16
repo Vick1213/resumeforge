@@ -46,4 +46,21 @@ public sealed record TailorOptions
     /// budget would ever need to cut) while keeping a pathological input's worst case cheap.
     /// </summary>
     public int MaxPageBudgetPasses { get; init; } = 50;
+
+    /// <summary>
+    /// Entry ids (<c>exp:</c>, <c>prj:</c>, <c>edu:</c>, <c>cert:</c>) the user forced into
+    /// the tailored resume, overriding both the model's commands and
+    /// <see cref="IPageBudgetEnforcer"/>'s trimming (CONTRACTS.md §6 "Forced inclusion").
+    /// Normalized from <see cref="TailoringRequest.PinnedEntryIds"/>'s nullable list to an
+    /// always-non-null empty default by <see cref="TailoringGraphFactory.Create"/>'s options
+    /// merge, the same way <see cref="MaxPages"/> flows.
+    /// </summary>
+    public IReadOnlyList<string> PinnedEntryIds { get; init; } = [];
+
+    /// <summary>
+    /// Entry ids the user forced out of the tailored resume, overriding the model's
+    /// commands (CONTRACTS.md §6 "Forced inclusion"). See <see cref="PinnedEntryIds"/> for
+    /// how this is populated.
+    /// </summary>
+    public IReadOnlyList<string> ExcludedEntryIds { get; init; } = [];
 }

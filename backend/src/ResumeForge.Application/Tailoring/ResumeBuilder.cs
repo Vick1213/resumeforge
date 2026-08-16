@@ -13,7 +13,9 @@ namespace ResumeForge.Application.Tailoring;
 /// <c>{parent}#{ordinal}</c>. Per CONTRACTS.md §3, there is no authored skills file —
 /// skill groups are synthesized from the <c>tech:</c> frontmatter of every experience and
 /// project item, canonicalized through <see cref="SkillNormalizer"/> and
-/// <see cref="ISkillTaxonomy"/>, and bucketed one group per taxonomy category.
+/// <see cref="ISkillTaxonomy"/>, and bucketed one group per taxonomy category — except a
+/// category left with exactly one skill, which folds into the trailing "Other" group rather
+/// than rendering as its own single-item row.
 /// </summary>
 public sealed class ResumeBuilder(ISkillTaxonomy taxonomy, TimeProvider timeProvider) : IResumeBuilder
 {
@@ -61,10 +63,10 @@ public sealed class ResumeBuilder(ISkillTaxonomy taxonomy, TimeProvider timeProv
             SectionOrder =
             [
                 SectionKind.Summary,
+                SectionKind.Education,
                 SectionKind.Skills,
                 SectionKind.Experience,
                 SectionKind.Projects,
-                SectionKind.Education,
                 SectionKind.Certifications,
             ],
             CreatedAt = now,
@@ -204,15 +206,35 @@ public sealed class ResumeBuilder(ISkillTaxonomy taxonomy, TimeProvider timeProv
 
         var groups = new List<SkillGroup>();
 
+        // A labeled category row for a single skill ("Practices: CI/CD", "Tools: Vite") reads
+        // as broken, not concise — a whole row of whitespace to say one word. Categories that
+        // end up with exactly one skill are folded into Other instead of standing alone; Other
+        // itself is exempt, since it is the fold's destination, not another source.
+        var otherBucket = byCategory.TryGetValue(OtherCategory, out var existingOther)
+            ? existingOther
+            : new Dictionary<string, string>(StringComparer.Ordinal);
+
         foreach (var category in CategoryOrder)
         {
-            if (byCategory.TryGetValue(category, out var bucket) && bucket.Count > 0)
+            if (!byCategory.TryGetValue(category, out var bucket) || bucket.Count == 0)
             {
-                groups.Add(BuildGroup(category, CategoryLabels[category], bucket));
+                continue;
             }
+
+            if (bucket.Count == 1)
+            {
+                foreach (var (canonical, display) in bucket)
+                {
+                    otherBucket.TryAdd(canonical, display);
+                }
+
+                continue;
+            }
+
+            groups.Add(BuildGroup(category, CategoryLabels[category], bucket));
         }
 
-        if (byCategory.TryGetValue(OtherCategory, out var otherBucket) && otherBucket.Count > 0)
+        if (otherBucket.Count > 0)
         {
             groups.Add(BuildGroup(OtherCategory, OtherLabel, otherBucket));
         }

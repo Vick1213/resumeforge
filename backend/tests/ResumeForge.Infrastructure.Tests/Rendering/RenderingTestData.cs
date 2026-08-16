@@ -29,8 +29,8 @@ internal static class RenderingTestData
             summary: "A backend engineer with distributed systems experience.",
             sectionOrder: sectionOrder ??
             [
-                SectionKind.Summary, SectionKind.Skills, SectionKind.Experience,
-                SectionKind.Projects, SectionKind.Education, SectionKind.Certifications,
+                SectionKind.Summary, SectionKind.Education, SectionKind.Skills,
+                SectionKind.Experience, SectionKind.Projects, SectionKind.Certifications,
             ]);
     }
 }

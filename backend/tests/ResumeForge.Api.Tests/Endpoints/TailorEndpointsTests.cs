@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 using ResumeForge.Api.Contracts;
@@ -197,6 +198,44 @@ public sealed class TailorEndpointsTests(ResumeForgeApiFactory factory)
     }
 
     [Fact]
+    public async Task Tailored_resume_headline_becomes_the_job_title_when_one_was_determined_at_ingest()
+    {
+        // CONTRACTS.md §2 "Tailored headline": deterministic, never a model decision.
+        // POST /api/jobs never sets Title for a pasted rawText posting (only a
+        // URL-fetched one does, via HtmlTextExtractor's JSON-LD/OpenGraph parsing), so this
+        // substitutes IJobPostingFetcher the same way the malformed-command test above
+        // substitutes ILanguageModel, and gives the title messy whitespace to also prove
+        // the override normalizes it rather than copying it verbatim.
+        var fetcher = Substitute.For<IJobPostingFetcher>();
+        fetcher.FetchAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(Task.FromResult(new JobPosting
+        {
+            Id = Guid.NewGuid().ToString(),
+            SourceUrl = "https://example.com/job",
+            Title = "  Senior   Backend Engineer  ",
+            RawText = SamplePosting,
+            FetchedAt = DateTimeOffset.UtcNow,
+        }));
+
+        using var scopedFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services => services.AddScoped<IJobPostingFetcher>(_ => fetcher)));
+        using var client = scopedFactory.CreateClient();
+
+        using var jobResponse = await client.PostAsJsonAsync(
+            "/api/jobs", new CreateJobRequest { Url = "https://example.com/job" }, TestJson.Options);
+        var job = await jobResponse.Content.ReadFromJsonAsync<JobPosting>(TestJson.Options);
+        job.ShouldNotBeNull();
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor", new TailorRequest { JobId = job.Id, DryRun = true }, TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+        result.ShouldNotBeNull();
+
+        result.Document.Basics.Headline.ShouldBe("Senior Backend Engineer");
+    }
+
+    [Fact]
     public async Task Tailor_for_unknown_job_returns_404()
     {
         using var client = factory.CreateClient();
@@ -355,6 +394,247 @@ public sealed class TailorEndpointsTests(ResumeForgeApiFactory factory)
 
         result.FitsBudget.ShouldBeTrue();
         result.Diff.ShouldNotContain(d => d.Rationale != null && d.Rationale.Contains("budget", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Max_pages_one_trims_more_than_the_default_two_page_budget_end_to_end()
+    {
+        // Regression for the bug this change fixes: TailoringGraphFactory.Create's options
+        // merge copied Effort and MaxRewrites from the request but forgot MaxPages, so
+        // enforce-page-budget always saw the DI-configured TailorOptions default (2)
+        // regardless of what TailorRequest.MaxPages asked for — a live run of
+        // `maxPages: 1` used to come back as a 2-page document with fitsBudget: true.
+        // The shared fixture profile is too small to ever need trimming at all (see
+        // Tailoring_result_reports_a_page_count_and_fits_the_default_budget above), so this
+        // temporarily adds enough knowledge items to overflow the default two-page budget
+        // on its own, and removes them again in `finally` so it never leaks into any other
+        // test sharing this collection's knowledge base.
+        using var client = factory.CreateClient();
+
+        var scratchIds = await AddLargeFillerKnowledgeBaseAsync(client);
+        try
+        {
+            var jobId = await CreateJobAsync(client);
+
+            using var twoPageResponse = await client.PostAsJsonAsync(
+                "/api/tailor", new TailorRequest { JobId = jobId, MaxPages = 2, DryRun = true }, TestJson.Options);
+            twoPageResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var twoPageResult = await twoPageResponse.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+            twoPageResult.ShouldNotBeNull();
+
+            using var onePageResponse = await client.PostAsJsonAsync(
+                "/api/tailor", new TailorRequest { JobId = jobId, MaxPages = 1, DryRun = true }, TestJson.Options);
+            onePageResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var onePageResult = await onePageResponse.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+            onePageResult.ShouldNotBeNull();
+
+            // The bug under regression would have made this come back PageCount: 2,
+            // FitsBudget: true — the request's MaxPages: 1 silently ignored.
+            onePageResult.PageCount.ShouldBe(1);
+            onePageResult.FitsBudget.ShouldBeTrue();
+
+            IncludedEntryCount(onePageResult.Document).ShouldBeLessThan(IncludedEntryCount(twoPageResult.Document));
+        }
+        finally
+        {
+            foreach (var id in scratchIds)
+            {
+                await client.DeleteAsync($"/api/knowledge/{id}");
+            }
+        }
+    }
+
+    private static int IncludedEntryCount(ResumeDocument document) =>
+        document.Experience.Count(e => e.Included) +
+        document.Projects.Count(p => p.Included) +
+        document.Certifications.Count(c => c.Included);
+
+    /// <summary>
+    /// Writes a batch of low-relevance filler experience/project knowledge items — enough
+    /// that the rendered resume overflows the default two-page budget on its own — and
+    /// returns their ids so the caller can delete them again once done. Every entry's
+    /// <c>tech:</c> is deliberately unrelated to <see cref="SamplePosting"/>'s C#/.NET/
+    /// PostgreSQL/Kubernetes requirements, so each one scores at or near zero relevance and
+    /// is a preferred cut candidate ahead of the fixture's own real experience/project entries.
+    /// </summary>
+    private static async Task<List<string>> AddLargeFillerKnowledgeBaseAsync(HttpClient client)
+    {
+        var ids = new List<string>();
+
+        for (var i = 0; i < 16; i++)
+        {
+            var id = $"exp:scratch-page-budget-{i:D2}";
+            var markdown = $"""
+                ---
+                type: experience
+                role: Filler Role {i}
+                organization: Filler Org {i}
+                location: Remote
+                startDate: {2003 + i}-01
+                endDate: {2004 + i}-01
+                tech: [Ruby, MongoDB]
+                tags: [filler]
+                ---
+
+                - Did unrelated filler work item one for role {i}, padding the rendered length of this entry so the resume overflows the default page budget in this test.
+                - Did unrelated filler work item two for role {i}, padding the rendered length of this entry so the resume overflows the default page budget in this test.
+                """;
+
+            using var response = await client.PutAsJsonAsync(
+                $"/api/knowledge/{id}", new UpsertKnowledgeRequest { RawMarkdown = markdown }, TestJson.Options);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            ids.Add(id);
+        }
+
+        for (var i = 0; i < 10; i++)
+        {
+            var id = $"prj:scratch-page-budget-{i:D2}";
+            var markdown = $"""
+                ---
+                type: project
+                name: Filler Project {i}
+                tagline: An unrelated filler project
+                startDate: {2010 + i}-01
+                endDate: {2011 + i}-01
+                tech: [Ruby, MongoDB]
+                tags: [filler]
+                source: manual
+                ---
+
+                - Built unrelated filler project {i}, padding the rendered length of this entry so the resume overflows the default page budget in this test.
+                """;
+
+            using var response = await client.PutAsJsonAsync(
+                $"/api/knowledge/{id}", new UpsertKnowledgeRequest { RawMarkdown = markdown }, TestJson.Options);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            ids.Add(id);
+        }
+
+        return ids;
+    }
+
+    [Fact]
+    public async Task Excluded_entry_ids_are_forced_out_of_the_tailored_resume_end_to_end()
+    {
+        // CONTRACTS.md §6 "Forced inclusion": the fixture's one experience entry
+        // (exp:acme-corp) is squarely on-topic for SamplePosting (C#/.NET/PostgreSQL), so
+        // the heuristic model would include it on its own — excludedEntryIds must override
+        // that decision after command execution regardless.
+        using var client = factory.CreateClient();
+
+        var jobId = await CreateJobAsync(client);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor",
+            new TailorRequest { JobId = jobId, ExcludedEntryIds = ["exp:acme-corp"], DryRun = true },
+            TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+        result.ShouldNotBeNull();
+
+        result.Document.Experience.Single(e => e.Id == "exp:acme-corp").Included.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Pinned_entry_ids_survive_the_page_budget_trim_end_to_end()
+    {
+        // CONTRACTS.md §6 "Forced inclusion" + "Page budget": pins extend the never-cut
+        // floor. Adds enough low-relevance filler (same helper Max_pages_one_trims... uses)
+        // to force enforce-page-budget to actually cut entries at maxPages: 1, pins one of
+        // the low-relevance filler projects, and asserts it survives while its unpinned,
+        // equally low-relevance siblings do not.
+        using var client = factory.CreateClient();
+
+        var scratchIds = await AddLargeFillerKnowledgeBaseAsync(client);
+        try
+        {
+            var jobId = await CreateJobAsync(client);
+            const string pinnedId = "prj:scratch-page-budget-00";
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/tailor",
+                new TailorRequest { JobId = jobId, MaxPages = 1, PinnedEntryIds = [pinnedId], DryRun = true },
+                TestJson.Options);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+            result.ShouldNotBeNull();
+
+            result.Document.Projects.Single(p => p.Id == pinnedId).Included.ShouldBeTrue();
+            result.Document.Projects.Where(p => p.Id != pinnedId && p.Id.StartsWith("prj:scratch-page-budget-", StringComparison.Ordinal))
+                .ShouldContain(p => !p.Included);
+        }
+        finally
+        {
+            foreach (var id in scratchIds)
+            {
+                await client.DeleteAsync($"/api/knowledge/{id}");
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Tailor_with_an_unknown_pinned_entry_id_returns_400_naming_it()
+    {
+        using var client = factory.CreateClient();
+
+        var jobId = await CreateJobAsync(client);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor",
+            new TailorRequest { JobId = jobId, PinnedEntryIds = ["prj:does-not-exist"], DryRun = true },
+            TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>(TestJson.Options);
+        problem.ShouldNotBeNull();
+        problem.Detail.ShouldNotBeNullOrWhiteSpace();
+        problem.Detail.ShouldContain("prj:does-not-exist");
+    }
+
+    [Fact]
+    public async Task Tailor_with_an_unknown_excluded_entry_id_returns_400_naming_it()
+    {
+        using var client = factory.CreateClient();
+
+        var jobId = await CreateJobAsync(client);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor",
+            new TailorRequest { JobId = jobId, ExcludedEntryIds = ["exp:does-not-exist"], DryRun = true },
+            TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>(TestJson.Options);
+        problem.ShouldNotBeNull();
+        problem.Detail.ShouldNotBeNullOrWhiteSpace();
+        problem.Detail.ShouldContain("exp:does-not-exist");
+    }
+
+    [Fact]
+    public async Task Tailor_with_an_id_in_both_pinned_and_excluded_lists_returns_400()
+    {
+        using var client = factory.CreateClient();
+
+        var jobId = await CreateJobAsync(client);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor",
+            new TailorRequest
+            {
+                JobId = jobId,
+                PinnedEntryIds = ["prj:graph-runner"],
+                ExcludedEntryIds = ["prj:graph-runner"],
+                DryRun = true,
+            },
+            TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>(TestJson.Options);
+        problem.ShouldNotBeNull();
+        problem.Detail.ShouldNotBeNullOrWhiteSpace();
+        problem.Detail.ShouldContain("prj:graph-runner");
     }
 
     private static Task<string> CreateJobAsync(HttpClient client) => CreateJobAsync(client, SamplePosting);
