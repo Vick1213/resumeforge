@@ -116,7 +116,7 @@ flowchart LR
 
     buildBrief --> proposeCommands["propose-commands (model)"]
 
-    loadKb --> validateCommands["validate-commands"]
+    buildBase --> validateCommands["validate-commands"]
     proposeCommands --> validateCommands
 
     validateCommands --> verifyFabrication["verify-fabrication"]
