@@ -261,6 +261,14 @@ public sealed class OpenAiCompatibleLanguageModel(
         var root = doc.RootElement;
         var usage = ParseUsage(root);
 
+        // Checked before any parse attempt: a response cut off at the cap is truncated
+        // whatever the strategy — mid-string tool-call arguments and mid-string content
+        // both throw the same opaque "reached end of data" JsonException otherwise.
+        if (HitOutputTokenCap(root))
+        {
+            throw new ModelResponseTruncatedException(request.SchemaName, request.MaxOutputTokens, usage.OutputTokens);
+        }
+
         if (strategy == StructuredOutputStrategy.ForcedToolCall)
         {
             var arguments = ExtractToolCallArguments(root);
@@ -278,6 +286,26 @@ public sealed class OpenAiCompatibleLanguageModel(
         var content = ExtractMessageContent(root)
             ?? throw new InvalidOperationException("OpenAI-compatible response had no message content.");
         return new OpenAiChatResult(content, usage);
+    }
+
+    /// <summary>
+    /// True when the first choice stopped because it ran out of output tokens. OpenAI-compatible
+    /// providers spell this <c>finish_reason: "length"</c>; some (DeepSeek among them) also use
+    /// <c>"max_tokens"</c>, so both are treated as the cap being hit.
+    /// </summary>
+    private static bool HitOutputTokenCap(JsonElement root)
+    {
+        if (!root.TryGetProperty("choices", out var choices) ||
+            choices.ValueKind != JsonValueKind.Array ||
+            choices.GetArrayLength() == 0 ||
+            !choices[0].TryGetProperty("finish_reason", out var reason) ||
+            reason.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        var value = reason.GetString();
+        return value is "length" or "max_tokens";
     }
 
     private static string? ExtractToolCallArguments(JsonElement root)

@@ -204,6 +204,29 @@ public sealed class AnthropicLanguageModelTests
         response.Usage.CacheHits.ShouldBe(80);
     }
 
+    [Fact]
+    public async Task A_response_cut_off_at_the_output_token_cap_reports_truncation_not_schema_failure()
+    {
+        var calls = 0;
+        var model = NewModel(new AiOptions { Provider = "anthropic", Model = "claude-sonnet-5", ApiKey = "sk-ant-test" }, request =>
+        {
+            calls++;
+            return TruncatedToolUseResponse();
+        });
+
+        var request = NewTailorCommandsRequest() with { MaxOutputTokens = 1024 };
+
+        var ex = await Should.ThrowAsync<ModelResponseTruncatedException>(
+            () => model.CompleteAsync<IReadOnlyList<TailorCommand>>(request, CancellationToken.None));
+
+        ex.MaxOutputTokens.ShouldBe(1024);
+        ex.CompletionTokens.ShouldBe(1024);
+        ex.SchemaName.ShouldBe(JsonSchemaRegistry.TailorCommandsSchemaName);
+
+        // Not retried: the same request under the same cap truncates identically.
+        calls.ShouldBe(1);
+    }
+
     private static AnthropicLanguageModel NewModel(AiOptions options, Func<HttpRequestMessage, HttpResponseMessage> respond)
     {
         var handler = new StubHttpMessageHandler(respond);
@@ -230,6 +253,20 @@ public sealed class AnthropicLanguageModelTests
         Content = new StringContent(
             "{\"content\":[{\"type\":\"tool_use\",\"name\":\"emit_result\",\"input\":" + inputJson +
             "}],\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}"),
+    };
+
+    /// <summary>
+    /// A <c>tool_use</c> block whose <c>input</c> stopped short because the model ran out of
+    /// output tokens. Anthropic still returns well-formed JSON — the payload is simply missing
+    /// the properties the model never reached — so only <c>stop_reason</c> distinguishes this
+    /// from a model that genuinely emitted the wrong shape.
+    /// </summary>
+    private static HttpResponseMessage TruncatedToolUseResponse() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent(
+            "{\"content\":[{\"type\":\"tool_use\",\"name\":\"emit_result\",\"input\":{}}]," +
+            "\"stop_reason\":\"max_tokens\"," +
+            "\"usage\":{\"input_tokens\":700,\"output_tokens\":1024}}"),
     };
 
     /// <summary>

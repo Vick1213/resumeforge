@@ -130,6 +130,18 @@ public sealed class AnthropicLanguageModel(
 
         var usage = ParseUsage(root);
 
+        // Checked before reading the tool_use block: Anthropic truncates the block's `input`
+        // in place when the cap is hit, so the schema-shaped object that comes back is simply
+        // missing whatever the model had not emitted yet. Left unchecked that surfaces as an
+        // ordinary schema-validation failure — the same misdiagnosis the OpenAI-compatible
+        // client used to make (see ModelResponseTruncatedException).
+        if (root.TryGetProperty("stop_reason", out var stopReason) &&
+            stopReason.ValueKind == JsonValueKind.String &&
+            stopReason.GetString() == "max_tokens")
+        {
+            throw new ModelResponseTruncatedException(request.SchemaName, request.MaxOutputTokens, usage.OutputTokens);
+        }
+
         if (root.TryGetProperty("content", out var contentEl))
         {
             foreach (var block in contentEl.EnumerateArray())

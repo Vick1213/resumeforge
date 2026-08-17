@@ -373,6 +373,43 @@ public sealed class OpenAiCompatibleLanguageModelTests
         calls.ShouldBe([StrategyKind.JsonSchema]);
     }
 
+    [Theory]
+    [InlineData("length")]
+    [InlineData("max_tokens")]
+    public async Task A_response_cut_off_at_the_output_token_cap_reports_truncation_not_schema_failure(string finishReason)
+    {
+        var model = NewModel(
+            new AiOptions { Provider = "deepseek", Model = "deepseek-chat", StructuredOutput = "prompted" },
+            _ => TruncatedResponse(finishReason));
+
+        var request = NewRequest() with { MaxOutputTokens = 1024 };
+
+        var ex = await Should.ThrowAsync<ModelResponseTruncatedException>(
+            () => model.CompleteAsync<TestPayload>(request, CancellationToken.None));
+
+        ex.MaxOutputTokens.ShouldBe(1024);
+        ex.CompletionTokens.ShouldBe(1024);
+        ex.SchemaName.ShouldBe(JsonSchemaRegistry.FieldResolutionsSchemaName);
+    }
+
+    [Fact]
+    public async Task A_truncated_response_is_not_retried_since_the_same_cap_truncates_again()
+    {
+        var calls = 0;
+        var model = NewModel(
+            new AiOptions { Provider = "deepseek", Model = "deepseek-chat", StructuredOutput = "prompted" },
+            _ =>
+            {
+                calls++;
+                return TruncatedResponse("length");
+            });
+
+        await Should.ThrowAsync<ModelResponseTruncatedException>(
+            () => model.CompleteAsync<TestPayload>(NewRequest(), CancellationToken.None));
+
+        calls.ShouldBe(1);
+    }
+
     private static OpenAiCompatibleLanguageModel NewModel(
         AiOptions options, Func<HttpRequestMessage, HttpResponseMessage> respond, StructuredOutputStrategyMemo? memo = null)
     {
@@ -442,6 +479,18 @@ public sealed class OpenAiCompatibleLanguageModelTests
     };
 
     private static HttpResponseMessage PromptedJsonResponse() => JsonSchemaResponse();
+
+    /// <summary>
+    /// HTTP 200 whose content stops mid-string because the model ran out of output tokens —
+    /// what DeepSeek returns for a command list that outgrows its cap.
+    /// </summary>
+    private static HttpResponseMessage TruncatedResponse(string finishReason) => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent(
+            "{\"choices\":[{\"message\":{\"content\":\"{\\\"resolutions\\\":{\\\"foo\\\":\\\"bar\"}," +
+            "\"finish_reason\":\"" + finishReason + "\"}]," +
+            "\"usage\":{\"prompt_tokens\":700,\"completion_tokens\":1024}}"),
+    };
 
     private sealed record TestPayload
     {
