@@ -4,6 +4,7 @@ import { BookmarkCheck, BookmarkPlus, Sparkles } from 'lucide-react';
 import { useCreateApplication, useCreateJob, useJobAnalysis, useKnowledge, useTailor } from '@/api/queries';
 import type { JobPosting, ModelEffort, SeniorityLevel } from '@/api/types';
 import { DEFAULT_EFFORT } from '@/lib/effort';
+import { usePersistentState } from '@/lib/persistentState';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -25,6 +26,26 @@ import type { ProjectSelectionState } from '@/components/tailor/ProjectSelection
 import { TokenUsagePanel } from '@/components/tailor/TokenUsagePanel';
 import { ExportButtons } from '@/components/tailor/ExportButtons';
 
+const SELECTION_STORAGE_KEY = 'resumeforge.tailor.projectSelection';
+
+const SELECTION_STATES: readonly ProjectSelectionState[] = ['auto', 'always', 'never'];
+
+/**
+ * Keeps only `id -> state` pairs whose state is still one this build understands,
+ * so a stored selection written by an older build (or edited by hand) degrades to
+ * the entries that remain valid instead of poisoning the whole map.
+ */
+function reviveSelection(raw: unknown): Record<string, ProjectSelectionState> | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+
+  return Object.fromEntries(
+    Object.entries(raw).filter(
+      (entry): entry is [string, ProjectSelectionState] =>
+        SELECTION_STATES.includes(entry[1] as ProjectSelectionState),
+    ),
+  );
+}
+
 const SENIORITY_LABELS: Record<SeniorityLevel, string> = {
   unknown: 'Unknown',
   intern: 'Intern',
@@ -41,7 +62,14 @@ export default function Tailor() {
   const [textValue, setTextValue] = useState('');
   const [effort, setEffort] = useState<ModelEffort>(DEFAULT_EFFORT);
   const [maxPages, setMaxPages] = useState<PageBudget>(2);
-  const [selection, setSelection] = useState<Record<string, ProjectSelectionState>>({});
+  // Persisted, unlike the fields above: "always include this project, never that
+  // one" is a standing judgement about the knowledge base itself, not about the
+  // posting being tailored to, so re-entering it for every run is pure retyping.
+  const [selection, setSelection] = usePersistentState<Record<string, ProjectSelectionState>>(
+    SELECTION_STORAGE_KEY,
+    {},
+    reviveSelection,
+  );
   const [job, setJob] = useState<JobPosting | undefined>(undefined);
 
   const createJob = useCreateJob();
