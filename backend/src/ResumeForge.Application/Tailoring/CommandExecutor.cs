@@ -73,6 +73,14 @@ public sealed class CommandExecutor(TimeProvider timeProvider) : ICommandExecuto
 
         foreach (var command in commands)
         {
+            if (command is SetTaglineCommand setTagline)
+            {
+                ctx.ApplySetTagline(setTagline, diff);
+            }
+        }
+
+        foreach (var command in commands)
+        {
             if (command is EmphasizeSkillsCommand emphasize)
             {
                 ctx.ApplyEmphasizeSkills(emphasize, diff);
@@ -640,6 +648,24 @@ public sealed class CommandExecutor(TimeProvider timeProvider) : ICommandExecuto
 
             diff.Add(NewDiff("sum", DiffKind.SummarySet, _summary, command.Text, command.Rationale));
             _summary = command.Text;
+        }
+
+        public void ApplySetTagline(SetTaglineCommand command, List<ResumeDiffEntry> diff)
+        {
+            var idx = _projects.FindIndex(p => p.Id == command.Target);
+            if (idx < 0)
+            {
+                return;
+            }
+
+            var project = _projects[idx];
+            if (string.Equals(project.Tagline, command.Text, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            diff.Add(NewDiff(command.Target, DiffKind.TaglineSet, project.Tagline, command.Text, command.Rationale));
+            _projects[idx] = project with { Tagline = command.Text };
         }
 
         public void ApplyEmphasizeSkills(EmphasizeSkillsCommand command, List<ResumeDiffEntry> diff)

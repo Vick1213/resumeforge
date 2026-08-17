@@ -77,11 +77,16 @@ public sealed class TailoringGraphFactoryTests
     }
 
     [Fact]
-    public void Build_brief_depends_on_all_three_score_nodes()
+    public void Build_brief_depends_on_all_three_score_nodes_and_on_the_posting_itself()
     {
         var graph = BuildGraph();
 
-        DependsOn(graph, "build-brief").ShouldBe(["score-experience", "score-projects", "score-skills"], ignoreOrder: true);
+        // fetch-jd is declared even though every score node already reaches it transitively:
+        // the brief reads the posting out of the context directly (for the JOB header and the
+        // POSTING excerpt), and a node that reads a result must declare the edge that produced
+        // it rather than rely on someone else's happening to schedule it first.
+        DependsOn(graph, "build-brief").ShouldBe(
+            ["fetch-jd", "score-experience", "score-projects", "score-skills"], ignoreOrder: true);
     }
 
     [Fact]
@@ -193,7 +198,7 @@ public sealed class TailoringGraphFactoryTests
         relevanceScorer.Score(Arg.Any<ResumeDocument>(), Arg.Any<JobAnalysis>()).Returns(candidates);
 
         var briefBuilder = Substitute.For<IBriefBuilder>();
-        briefBuilder.Build(Arg.Any<JobAnalysis>(), Arg.Any<CandidateSet>(), Arg.Any<ResumeDocument>(), Arg.Any<TailorOptions>())
+        briefBuilder.Build(Arg.Any<JobPosting>(), Arg.Any<JobAnalysis>(), Arg.Any<CandidateSet>(), Arg.Any<ResumeDocument>(), Arg.Any<TailorOptions>())
             .Returns("brief");
 
         var languageModel = Substitute.For<ILanguageModel>();
@@ -277,7 +282,7 @@ public sealed class TailoringGraphFactoryTests
         relevanceScorer.Score(Arg.Any<ResumeDocument>(), Arg.Any<JobAnalysis>()).Returns(candidates);
 
         var briefBuilder = Substitute.For<IBriefBuilder>();
-        briefBuilder.Build(Arg.Any<JobAnalysis>(), Arg.Any<CandidateSet>(), Arg.Any<ResumeDocument>(), Arg.Any<TailorOptions>())
+        briefBuilder.Build(Arg.Any<JobPosting>(), Arg.Any<JobAnalysis>(), Arg.Any<CandidateSet>(), Arg.Any<ResumeDocument>(), Arg.Any<TailorOptions>())
             .Returns("brief");
 
         var languageModel = Substitute.For<ILanguageModel>();
@@ -462,7 +467,7 @@ public sealed class TailoringGraphFactoryTests
         relevanceScorer.Score(Arg.Any<ResumeDocument>(), Arg.Any<JobAnalysis>()).Returns(candidates);
 
         var briefBuilder = Substitute.For<IBriefBuilder>();
-        briefBuilder.Build(Arg.Any<JobAnalysis>(), Arg.Any<CandidateSet>(), Arg.Any<ResumeDocument>(), Arg.Any<TailorOptions>())
+        briefBuilder.Build(Arg.Any<JobPosting>(), Arg.Any<JobAnalysis>(), Arg.Any<CandidateSet>(), Arg.Any<ResumeDocument>(), Arg.Any<TailorOptions>())
             .Returns("brief");
 
         var languageModel = Substitute.For<ILanguageModel>();
@@ -551,7 +556,7 @@ public sealed class TailoringGraphFactoryTests
         relevanceScorer.Score(Arg.Any<ResumeDocument>(), Arg.Any<JobAnalysis>()).Returns(candidates);
 
         var briefBuilder = Substitute.For<IBriefBuilder>();
-        briefBuilder.Build(Arg.Any<JobAnalysis>(), Arg.Any<CandidateSet>(), Arg.Any<ResumeDocument>(), Arg.Any<TailorOptions>())
+        briefBuilder.Build(Arg.Any<JobPosting>(), Arg.Any<JobAnalysis>(), Arg.Any<CandidateSet>(), Arg.Any<ResumeDocument>(), Arg.Any<TailorOptions>())
             .Returns("brief");
 
         var languageModel = Substitute.For<ILanguageModel>();
@@ -647,6 +652,7 @@ public sealed class TailoringGraphFactoryTests
         CandidateSet? candidateSetSeenByBriefBuilder = null;
         var briefBuilder = Substitute.For<IBriefBuilder>();
         briefBuilder.Build(
+                Arg.Any<JobPosting>(),
                 Arg.Any<JobAnalysis>(),
                 Arg.Do<CandidateSet>(c => candidateSetSeenByBriefBuilder = c),
                 Arg.Any<ResumeDocument>(),

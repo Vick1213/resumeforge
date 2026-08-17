@@ -382,6 +382,7 @@ Polymorphic JSON with discriminator `"op"`:
 [JsonDerivedType(typeof(EmphasizeSkillsCommand),"emphasizeSkills")]
 [JsonDerivedType(typeof(SetSectionOrderCommand),"setSectionOrder")]
 [JsonDerivedType(typeof(InjectKeywordsCommand), "injectKeywords")]
+[JsonDerivedType(typeof(SetTaglineCommand),     "setTagline")]
 public abstract record TailorCommand
 {
     public string? Rationale { get; init; }   // one short clause, shown in the diff UI
@@ -580,15 +581,24 @@ public enum ModelEffort { Minimal, Standard, Thorough, Maximum }
 | `Standard` | 6 | `rewrite`, `setSummary` | ~600 |
 | `Thorough` | 12 | + `injectKeywords` | ~1,200 |
 | `Maximum` | 20 | + `setSummary` regenerated per run | ~2,000 |
+| `Full` | 200 | + `setTagline` (project descriptions) | ~5,000–10,000 |
 
 `Standard` is the default and is what every existing behaviour maps to, so effort is
 purely additive — an omitted `Effort` must produce byte-identical output to before this
 was introduced.
 
-Two rules that hold at **every** level, including `Maximum`:
+`Full` is the "change anything" tier: its `MaxRewrites` of 200 is a backstop rather than a
+budget — no resume has 200 rewritable bullets, so in practice every bullet is in play — and
+it is the only level at which `setTagline` may rewrite a project's one-line description.
+Its ~5,000–10,000 output tokens are the cost of rewriting a whole document rather than a
+handful of lines, which is why it is opt-in rather than the default.
+
+Two rules that hold at **every** level, including `Maximum` and `Full`:
 
 - The fabrication guard is never relaxed. Higher effort buys more rewriting, never
-  permission to invent a metric, an employer, or a date.
+  permission to invent a metric, an employer, or a date. This is the one thing `Full` does
+  *not* unlock: it may rephrase, reframe, and re-emphasize anything, and may introduce
+  nothing.
 - `selectVariant` is still preferred over `rewrite` wherever a suitable KB variant
   exists. Effort raises the cap on rewrites; it does not make rewriting the goal.
 

@@ -202,6 +202,31 @@ public sealed class CommandExecutorTests
     }
 
     [Fact]
+    public void Set_tagline_updates_the_project_description_and_records_diff()
+    {
+        var project = TestData.Project("prj:tinyorm", "TinyORM", tagline: "A minimal ORM.");
+        var doc = NewDocument() with { Projects = [project] };
+
+        var result = _executor.Execute(doc, [new SetTaglineCommand { Target = "prj:tinyorm", Text = "A minimal ORM for small services." }]);
+
+        result.Document.Projects.Single().Tagline.ShouldBe("A minimal ORM for small services.");
+        var diff = result.Diff.Single(d => d.Kind == DiffKind.TaglineSet);
+        diff.Before.ShouldBe("A minimal ORM.");
+        diff.After.ShouldBe("A minimal ORM for small services.");
+    }
+
+    [Fact]
+    public void Set_tagline_naming_an_unknown_project_changes_nothing()
+    {
+        var doc = NewDocument() with { Projects = [TestData.Project("prj:tinyorm", "TinyORM", tagline: "A minimal ORM.")] };
+
+        var result = _executor.Execute(doc, [new SetTaglineCommand { Target = "prj:nope", Text = "Something else." }]);
+
+        result.Document.Projects.Single().Tagline.ShouldBe("A minimal ORM.");
+        result.Diff.ShouldNotContain(d => d.Kind == DiffKind.TaglineSet);
+    }
+
+    [Fact]
     public void Multiple_set_summary_commands_the_last_one_wins()
     {
         var doc = NewDocument();

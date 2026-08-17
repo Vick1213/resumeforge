@@ -310,7 +310,7 @@ export interface CandidateSet {
  * Serializes as the lowercase name. `standard` is the wire default — an
  * omitted `effort` on a request reproduces pre-effort behaviour exactly.
  */
-export type ModelEffort = 'minimal' | 'standard' | 'thorough' | 'maximum';
+export type ModelEffort = 'minimal' | 'standard' | 'thorough' | 'maximum' | 'full';
 
 interface TailorCommandBase {
   rationale?: string;

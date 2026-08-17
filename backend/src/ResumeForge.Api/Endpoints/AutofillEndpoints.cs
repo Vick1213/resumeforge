@@ -174,7 +174,11 @@ public static class AutofillEndpoints
     /// </summary>
     private static int MaxOutputTokensFor(ModelEffort effort) => effort switch
     {
-        ModelEffort.Maximum => 2048,
+        // Full behaves as Maximum here: it is a tailoring tier (it unlocks rewriting every
+        // bullet and every project tagline), and autofill emits none of those ops — so it
+        // must not fall through to the 512 floor, which would give the most expensive setting
+        // the smallest per-answer budget.
+        ModelEffort.Maximum or ModelEffort.Full => 2048,
         ModelEffort.Thorough => 1024,
         _ => 512,
     };
@@ -297,6 +301,7 @@ public static class AutofillEndpoints
         ModelEffort.Standard => "standard",
         ModelEffort.Thorough => "thorough",
         ModelEffort.Maximum => "maximum",
+        ModelEffort.Full => "full",
         _ => "standard",
     };
 

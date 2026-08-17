@@ -23,4 +23,17 @@ public enum ModelEffort
 
     /// <summary>Regenerates the summary every run. <c>MaxRewrites</c> 20.</summary>
     Maximum,
+
+    /// <summary>
+    /// Every op, on every element, with the rewrite budget effectively lifted: additionally
+    /// enables <c>setTagline</c>, so a project's one-line description is rewritable too, and
+    /// nothing in the document is off-limits to the model's judgement. <c>MaxRewrites</c> 200.
+    /// </summary>
+    /// <remarks>
+    /// The one thing this tier does *not* relax is the fabrication guard. "Change anything it
+    /// doesn't like" means rephrase, reorder, and re-emphasize anything — never invent an
+    /// employer, a date, or a metric the knowledge base cannot support. That rule holds
+    /// identically here and at <see cref="Minimal"/> (CONTRACTS.md §6).
+    /// </remarks>
+    Full,
 }

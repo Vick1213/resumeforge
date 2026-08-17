@@ -187,7 +187,7 @@ public sealed class HeuristicLanguageModelTests
         var analysis = new JobAnalyzer(taxonomy).Analyze(posting);
 
         var candidates = new Bm25RelevanceScorer(time, new ScoringOptions()).Score(baseResume, analysis);
-        var brief = new BriefBuilder().Build(analysis, candidates, baseResume, _options);
+        var brief = new BriefBuilder().Build(posting, analysis, candidates, baseResume, _options);
 
         var response = await _model.CompleteAsync<IReadOnlyList<TailorCommand>>(NewRequest(brief), CancellationToken.None);
 
@@ -429,7 +429,7 @@ public sealed class HeuristicLanguageModelTests
         var analysis = new JobAnalyzer(taxonomy).Analyze(posting);
 
         var candidates = new Bm25RelevanceScorer(time, new ScoringOptions()).Score(baseResume, analysis);
-        var brief = new BriefBuilder().Build(analysis, candidates, baseResume, options);
+        var brief = new BriefBuilder().Build(posting, analysis, candidates, baseResume, options);
 
         var response = await _model.CompleteAsync<IReadOnlyList<TailorCommand>>(NewRequest(brief), CancellationToken.None);
 
@@ -483,13 +483,13 @@ public sealed class HeuristicLanguageModelTests
         var analysis = new JobAnalyzer(taxonomy).Analyze(posting);
 
         var candidates = new Bm25RelevanceScorer(time, new ScoringOptions()).Score(baseResume, analysis);
-        var brief = new BriefBuilder().Build(analysis, candidates, baseResume, options);
+        var brief = new BriefBuilder().Build(posting, analysis, candidates, baseResume, options);
 
         var response = await _model.CompleteAsync<IReadOnlyList<TailorCommand>>(NewRequest(brief), CancellationToken.None);
 
         response.Value.ShouldNotContain(c => c is InjectKeywordsCommand);
 
-        var standardBrief = new BriefBuilder().Build(analysis, candidates, baseResume, new TailorOptions { Effort = ModelEffort.Standard });
+        var standardBrief = new BriefBuilder().Build(posting, analysis, candidates, baseResume, new TailorOptions { Effort = ModelEffort.Standard });
         var standardResponse = await _model.CompleteAsync<IReadOnlyList<TailorCommand>>(NewRequest(standardBrief), CancellationToken.None);
 
         JsonSerializer.Serialize(response.Value).ShouldBe(JsonSerializer.Serialize(standardResponse.Value));

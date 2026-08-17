@@ -210,6 +210,17 @@ public sealed class JsonSchemaRegistry
                   {
                     "type": "object",
                     "properties": {
+                      "op": { "const": "setTagline" },
+                      "target": { "type": "string" },
+                      "text": { "type": "string", "maxLength": 300 },
+                      "rationale": { "type": ["string", "null"] }
+                    },
+                    "required": ["op", "target", "text"],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
                       "op": { "const": "emphasizeSkills" },
                       "skills": { "type": "array", "items": { "type": "string" } },
                       "rationale": { "type": ["string", "null"] }

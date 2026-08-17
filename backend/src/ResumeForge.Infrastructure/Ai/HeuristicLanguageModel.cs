@@ -54,6 +54,8 @@ public sealed class HeuristicLanguageModel(TailorOptions tailorOptions, IKnowled
     private const string ProjectsHeader = "CANDIDATES-PROJECTS";
     private const string SkillsHeader = "CANDIDATES-SKILLS";
     private const string KeywordsHeader = "KEYWORDS";
+    private const string PostingHeader = "POSTING";
+    private const string TaglinesHeader = "TAGLINES";
     private const string EffortPrefix = "EFFORT|";
 
     private const string CanonicalKeysPrefix = "CANONICAL-KEYS:";
@@ -158,8 +160,12 @@ public sealed class HeuristicLanguageModel(TailorOptions tailorOptions, IKnowled
                 continue;
             }
 
-            if (line is RequirementsHeader or ExperienceHeader or ProjectsHeader or SkillsHeader or KeywordsHeader)
+            if (line is RequirementsHeader or ExperienceHeader or ProjectsHeader or SkillsHeader or KeywordsHeader or PostingHeader or TaglinesHeader)
             {
+                // PostingHeader is recognized purely so its body is skipped: this model
+                // ranks deterministically and has no use for prose, but leaving the header
+                // unknown would file every line of the posting under whichever section
+                // preceded it — a KEYWORDS list full of sentences, for instance.
                 section = line;
                 continue;
             }
@@ -204,6 +210,7 @@ public sealed class HeuristicLanguageModel(TailorOptions tailorOptions, IKnowled
         "standard" => ModelEffort.Standard,
         "thorough" => ModelEffort.Thorough,
         "maximum" => ModelEffort.Maximum,
+        "full" => ModelEffort.Full,
         _ => ModelEffort.Standard,
     };
 

@@ -48,4 +48,7 @@ public enum DiffKind
 
     /// <summary>Job-description keywords already evidenced by the knowledge base were woven into a bullet.</summary>
     KeywordsInjected,
+
+    /// <summary>A project's one-line description was rewritten.</summary>
+    TaglineSet,
 }

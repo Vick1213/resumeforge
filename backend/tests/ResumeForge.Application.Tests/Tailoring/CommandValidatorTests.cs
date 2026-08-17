@@ -26,6 +26,66 @@ public sealed class CommandValidatorTests
     private static TailorOptions Options(int maxRewrites = 6, ModelEffort effort = ModelEffort.Standard) =>
         new() { MaxRewrites = maxRewrites, Effort = effort };
 
+    private static ResumeDocument NewDocumentWithProject()
+    {
+        var bullet = TestData.Bullet("prj:tinyorm#0", "Built a tiny ORM used by 200 developers.");
+        var project = TestData.Project(
+            "prj:tinyorm", "TinyORM", new DateOnly(2021, 1, 1), new DateOnly(2022, 1, 1),
+            bullets: [bullet], tagline: "A minimal ORM for small services.");
+
+        return NewDocument() with { Projects = [project] };
+    }
+
+    [Fact]
+    public void SetTagline_at_full_effort_rewrites_a_project_description()
+    {
+        var command = new SetTaglineCommand
+        {
+            Target = "prj:tinyorm",
+            Text = "A minimal ORM for small services, built for fast iteration.",
+        };
+
+        var result = _validator.Validate([command], NewDocumentWithProject(), Options(effort: ModelEffort.Full));
+
+        result.Accepted.ShouldBe([command]);
+    }
+
+    [Fact]
+    public void SetTagline_below_full_effort_is_rejected_with_op_unavailable_at_effort_code()
+    {
+        var command = new SetTaglineCommand { Target = "prj:tinyorm", Text = "A minimal ORM." };
+
+        var result = _validator.Validate([command], NewDocumentWithProject(), Options(effort: ModelEffort.Maximum));
+
+        result.Rejected.Single().Code.ShouldBe("op-unavailable-at-effort");
+    }
+
+    [Fact]
+    public void SetTagline_targeting_something_that_is_not_a_project_is_rejected()
+    {
+        var command = new SetTaglineCommand { Target = "exp:acme", Text = "A minimal ORM." };
+
+        var result = _validator.Validate([command], NewDocumentWithProject(), Options(effort: ModelEffort.Full));
+
+        result.Rejected.Single().Code.ShouldBe("unknown-target");
+    }
+
+    [Fact]
+    public void SetTagline_inventing_a_metric_is_rejected_even_at_full_effort()
+    {
+        // Full effort lifts the rewrite budget, never the fabrication guard: a number that
+        // appears in neither the tagline being replaced nor anywhere else is still invented.
+        var command = new SetTaglineCommand
+        {
+            Target = "prj:tinyorm",
+            Text = "A minimal ORM for small services, adopted by 5000 teams.",
+        };
+
+        var result = _validator.Validate([command], NewDocumentWithProject(), Options(effort: ModelEffort.Full));
+
+        result.Rejected.Single().Code.ShouldBe("fabricated-metric");
+    }
+
     [Fact]
     public void Valid_include_command_is_accepted()
     {

@@ -27,19 +27,93 @@ public sealed class BriefBuilderTests
     }
 
     [Fact]
-    public void A_realistic_brief_stays_under_the_1800_estimated_token_ceiling()
+    public void A_realistic_brief_stays_under_the_estimated_token_ceiling()
     {
         // A realistic base resume: 3 roles x 5 bullets, 2 projects x 4 bullets, 15 skills,
-        // and 15 job requirements — representative of an actual tailoring run.
+        // and 15 job requirements — representative of an actual tailoring run — against a
+        // posting longer than the excerpt budget, so the excerpt is the binding constraint
+        // rather than the fixture's length.
         var (baseResume, candidates) = BuildRealisticFixture(experienceEntries: 3, bulletsPerExperience: 5, projectEntries: 2, bulletsPerProject: 4, skillCount: 15);
         var analysis = BuildRequirements(15);
         var options = new TailorOptions();
+        var posting = TestData.Posting(rawText: LongPostingText(options.PostingExcerptChars * 2));
 
-        var brief = _builder.Build(analysis, candidates, baseResume, options);
+        var brief = _builder.Build(posting, analysis, candidates, baseResume, options);
         var estimated = _builder.EstimateTokens(brief);
 
-        estimated.ShouldBeLessThan(1800);
+        // Raised from 1800 when the posting excerpt was added: the model was previously
+        // judging alignment from extracted requirements alone, which is a lossy heuristic.
+        // The ceiling is still asserted — and still bounded, since PostingExcerptChars caps
+        // the new component — because "input grew for a reason" must not become "input grew
+        // unnoticed". Output tokens, the half that dominates cost, are untouched.
+        estimated.ShouldBeLessThan(3000);
     }
+
+    [Fact]
+    public void Brief_bounds_the_posting_excerpt_and_marks_where_it_cut()
+    {
+        var (baseResume, candidates) = BuildRealisticFixture(1, 1, 0, 0, 1);
+        var options = new TailorOptions { PostingExcerptChars = 200 };
+        var posting = TestData.Posting(rawText: LongPostingText(5000));
+
+        var brief = _builder.Build(posting, BuildRequirements(1), candidates, baseResume, options);
+
+        brief.ShouldContain("POSTING");
+        brief.ShouldContain("(posting truncated)");
+        brief.Length.ShouldBeLessThan(5000);
+    }
+
+    [Fact]
+    public void Brief_omits_the_posting_entirely_when_the_excerpt_budget_is_zero()
+    {
+        var (baseResume, candidates) = BuildRealisticFixture(1, 1, 0, 0, 1);
+        var posting = TestData.Posting(rawText: "We are hiring a backend engineer.");
+
+        var brief = _builder.Build(
+            posting, BuildRequirements(1), candidates, baseResume, new TailorOptions { PostingExcerptChars = 0 });
+
+        brief.ShouldNotContain("POSTING");
+        brief.ShouldNotContain("We are hiring");
+    }
+
+    [Fact]
+    public void Brief_carries_the_job_header_so_the_model_knows_what_it_is_tailoring_to()
+    {
+        var (baseResume, candidates) = BuildRealisticFixture(1, 1, 0, 0, 1);
+        var posting = TestData.Posting(title: "Senior Backend Engineer", company: "Acme | Corp");
+
+        var brief = _builder.Build(posting, BuildRequirements(1), candidates, baseResume, new TailorOptions());
+
+        // The company's own pipe is neutralized, or it would shift every later field.
+        brief.ShouldContain("JOB|Senior Backend Engineer|Acme / Corp||");
+    }
+
+    [Fact]
+    public void Brief_lists_project_taglines_only_at_full_effort()
+    {
+        var project = TestData.Project(
+            "prj:tinyorm", "TinyORM", new DateOnly(2021, 1, 1), new DateOnly(2022, 1, 1),
+            tagline: "A minimal ORM for small services.");
+        var baseResume = TestData.Document(projects: [project]);
+        var candidates = new CandidateSet { Experience = [], Projects = [], Skills = [] };
+
+        var atFull = _builder.Build(
+            TestData.Posting(), BuildRequirements(1), candidates, baseResume, new TailorOptions { Effort = ModelEffort.Full });
+        var atMaximum = _builder.Build(
+            TestData.Posting(), BuildRequirements(1), candidates, baseResume, new TailorOptions { Effort = ModelEffort.Maximum });
+
+        // Without this the model cannot emit setTagline at all: every other section keys off
+        // bullet ids, so the project's own id never appears in the brief.
+        atFull.ShouldContain("TAGLINES");
+        atFull.ShouldContain("prj:tinyorm|A minimal ORM for small services.");
+        atMaximum.ShouldNotContain("TAGLINES");
+    }
+
+    private static string LongPostingText(int approximateChars) =>
+        string.Join(
+            '\n',
+            Enumerable.Range(0, Math.Max(1, approximateChars / 60))
+                .Select(i => $"Responsibility {i}: own a service end to end and mentor peers."));
 
     [Fact]
     public void Brief_never_includes_full_bullet_text_beyond_the_truncation_cap()
@@ -56,7 +130,7 @@ public sealed class BriefBuilderTests
             Skills = [],
         };
 
-        var brief = _builder.Build(TestData.Analysis(), candidates, baseResume, new TailorOptions());
+        var brief = _builder.Build(TestData.Posting(), TestData.Analysis(), candidates, baseResume, new TailorOptions());
 
         brief.ShouldNotContain(longText);
         brief.Length.ShouldBeLessThan(longText.Length);
@@ -76,7 +150,7 @@ public sealed class BriefBuilderTests
             Skills = [],
         };
 
-        var brief = _builder.Build(TestData.Analysis(), candidates, baseResume, new TailorOptions { CandidateLimit = 5 });
+        var brief = _builder.Build(TestData.Posting(), TestData.Analysis(), candidates, baseResume, new TailorOptions { CandidateLimit = 5 });
 
         var experienceLines = brief.Split('\n').Where(l => l.StartsWith("exp:acme#", StringComparison.Ordinal)).ToList();
         experienceLines.Count.ShouldBe(5);
@@ -99,7 +173,7 @@ public sealed class BriefBuilderTests
         var analysis = TestData.Analysis(requirements:
             [TestData.Requirement("req:0", "Must know C#", RequirementKind.Skill, true)]);
 
-        var brief = _builder.Build(analysis, candidates, baseResume, new TailorOptions());
+        var brief = _builder.Build(TestData.Posting(), analysis, candidates, baseResume, new TailorOptions());
 
         brief.ShouldContain("req:0|M|Must know C#");
         brief.ShouldContain("exp:acme#0|v2|Cut latency significantly.");

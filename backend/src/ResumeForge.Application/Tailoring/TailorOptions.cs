@@ -19,6 +19,20 @@ public sealed record TailorOptions
     public int CandidateLimit { get; init; } = 40;
 
     /// <summary>
+    /// Characters of the posting's own text included in the brief; <c>0</c> omits it.
+    /// </summary>
+    /// <remarks>
+    /// Requirement extraction and skill matching are deterministic heuristics, so they miss
+    /// things and occasionally mis-split a sentence. Giving the model the posting itself lets
+    /// it judge alignment against what the employer actually wrote rather than only against
+    /// what the extractor made of it. The default trades roughly 1,000 input tokens for that;
+    /// output tokens — the expensive half, and the ones the product's cost story is built on
+    /// (CONTRACTS.md §6) — are unaffected, since the command list stays bounded by the number
+    /// of decisions rather than by how much context informed them.
+    /// </remarks>
+    public int PostingExcerptChars { get; init; } = 4000;
+
+    /// <summary>
     /// The effort level this run was configured for (CONTRACTS.md §6). Governs which
     /// additional ops are available — currently just <c>injectKeywords</c>, gated at
     /// <see cref="ModelEffort.Thorough"/> and above by <see cref="CommandValidator"/>.

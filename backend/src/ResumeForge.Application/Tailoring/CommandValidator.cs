@@ -231,6 +231,54 @@ public sealed class CommandValidator(IFabricationGuard fabricationGuard) : IComm
 
                 break;
 
+            case SetTaglineCommand setTagline:
+            {
+                if (options.Effort < ModelEffort.Full)
+                {
+                    rejection = Reject(
+                        command,
+                        $"setTagline requires Full effort; this run is {options.Effort}.",
+                        "op-unavailable-at-effort");
+                    return true;
+                }
+
+                var project = document.Projects.FirstOrDefault(p => p.Id == setTagline.Target);
+                if (project is null)
+                {
+                    rejection = Reject(
+                        command,
+                        $"'{setTagline.Target}' does not resolve to a project in the document.",
+                        "unknown-target");
+                    return true;
+                }
+
+                if (setTagline.Text.Length > 300)
+                {
+                    rejection = Reject(
+                        command,
+                        $"Tagline text is {setTagline.Text.Length} characters, exceeding the 300-character limit.",
+                        "rewrite-too-long");
+                    return true;
+                }
+
+                if (setTagline.Text.Contains('\n') || setTagline.Text.Contains('\r'))
+                {
+                    rejection = Reject(command, "Tagline text must be a single line.", "rewrite-multiline");
+                    return true;
+                }
+
+                // Guarded against the tagline it replaces, exactly as a bullet rewrite is
+                // guarded against the bullet it replaces. A project with no tagline yet has
+                // nothing to contradict, so the empty string is the honest baseline.
+                if (!fabricationGuard.IsSafe(project.Tagline ?? string.Empty, setTagline.Text, out var taglineReason))
+                {
+                    rejection = Reject(command, taglineReason ?? "Tagline failed the anti-fabrication check.", "fabricated-metric");
+                    return true;
+                }
+
+                break;
+            }
+
             case InjectKeywordsCommand inject:
                 if (!EntityId.TryParse(inject.Target, out var injId) || !document.TryFindBullet(injId, out var injBullet))
                 {

@@ -18,6 +18,7 @@ namespace ResumeForge.Application.Tailoring;
 [JsonDerivedType(typeof(EmphasizeSkillsCommand), "emphasizeSkills")]
 [JsonDerivedType(typeof(SetSectionOrderCommand), "setSectionOrder")]
 [JsonDerivedType(typeof(InjectKeywordsCommand), "injectKeywords")]
+[JsonDerivedType(typeof(SetTaglineCommand), "setTagline")]
 public abstract record TailorCommand
 {
     /// <summary>One short clause explaining the command, shown in the diff UI.</summary>
@@ -82,6 +83,26 @@ public sealed record RewriteCommand : TailorCommand
 public sealed record SetSummaryCommand : TailorCommand
 {
     /// <summary>The new summary text.</summary>
+    public required string Text { get; init; }
+}
+
+/// <summary>
+/// Replaces a project's one-line description — the italic line under its name — with
+/// model-generated prose. Only available at <see cref="ModelEffort.Full"/>.
+/// </summary>
+/// <remarks>
+/// Every other prose op targets a bullet, which left the tagline the one line on the page
+/// that stayed identical no matter which job was being tailored to, despite being the first
+/// line a reader sees under each project. It is gated at <c>Full</c> rather than enabled
+/// everywhere because it spends output tokens on a line most runs are happy to leave alone,
+/// and it passes the same <see cref="IFabricationGuard"/> every rewrite does.
+/// </remarks>
+public sealed record SetTaglineCommand : TailorCommand
+{
+    /// <summary>The project entry id to retagline, e.g. <c>"prj:tinyorm"</c>.</summary>
+    public required string Target { get; init; }
+
+    /// <summary>The replacement description.</summary>
     public required string Text { get; init; }
 }
 

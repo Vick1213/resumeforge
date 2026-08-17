@@ -33,7 +33,8 @@ public static class TestData
 
     public static ProjectEntry Project(
         string id, string name, DateOnly? start = null, DateOnly? end = null,
-        IReadOnlyList<Bullet>? bullets = null, IReadOnlyList<string>? tech = null, bool included = true) => new()
+        IReadOnlyList<Bullet>? bullets = null, IReadOnlyList<string>? tech = null, bool included = true,
+        string? tagline = null) => new()
     {
         Id = id,
         Name = name,
@@ -42,6 +43,7 @@ public static class TestData
         Bullets = bullets ?? [],
         Tech = tech ?? [],
         Included = included,
+        Tagline = tagline,
     };
 
     public static EducationEntry Education(

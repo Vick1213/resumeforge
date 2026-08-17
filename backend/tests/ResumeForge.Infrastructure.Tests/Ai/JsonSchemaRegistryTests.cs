@@ -60,17 +60,30 @@ public sealed class JsonSchemaRegistryTests
         Should.Throw<KeyNotFoundException>(() => _registry.GetPayloadPropertyName("does-not-exist"));
     }
 
+    /// <summary>
+    /// The schema's op list must match <see cref="TailorCommand"/>'s own polymorphic
+    /// discriminators exactly. Derived from the attributes rather than pinned to a count, so
+    /// adding a command type without teaching the schema about it fails here — the model
+    /// would otherwise have no way to emit the new op, and the omission would look like the
+    /// model simply choosing not to use it.
+    /// </summary>
     [Fact]
-    public void Every_command_variant_in_the_tailor_commands_schema_is_valid_json()
+    public void Every_command_variant_in_the_tailor_commands_schema_matches_a_declared_command_type()
     {
         var schema = _registry.GetSchema(JsonSchemaRegistry.TailorCommandsSchemaName);
         var oneOf = schema.GetProperty("properties").GetProperty("commands").GetProperty("items").GetProperty("oneOf");
 
-        oneOf.GetArrayLength().ShouldBe(9);
-        foreach (var variant in oneOf.EnumerateArray())
-        {
-            variant.GetProperty("properties").GetProperty("op").GetProperty("const").ValueKind.ShouldBe(JsonValueKind.String);
-        }
+        var schemaOps = oneOf.EnumerateArray()
+            .Select(variant => variant.GetProperty("properties").GetProperty("op").GetProperty("const").GetString())
+            .ToList();
+
+        var declaredOps = typeof(TailorCommand)
+            .GetCustomAttributes(typeof(JsonDerivedTypeAttribute), inherit: false)
+            .Cast<JsonDerivedTypeAttribute>()
+            .Select(a => a.TypeDiscriminator as string)
+            .ToList();
+
+        schemaOps.ShouldBe(declaredOps, ignoreOrder: true);
     }
 
     /// <summary>

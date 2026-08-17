@@ -85,7 +85,13 @@ public sealed class TailoringGraphFactory(
         "You tailor a resume to a job by emitting a JSON array of commands only. You never " +
         "write resume prose except through the rewrite command, and only when no existing " +
         "variant fits. Prefer selectVariant over rewrite. Reference only the requirement and " +
-        "candidate ids given to you. Do not invent metrics or facts.";
+        "candidate ids given to you. Do not invent metrics or facts. " +
+        "The brief gives you the JOB header, the REQUIREMENTS a deterministic extractor found, " +
+        "and POSTING, the employer's own text. The extractor is a heuristic: it misses " +
+        "requirements and sometimes splits one badly, so where the two disagree the POSTING " +
+        "wins. Judge every decision — what to include, what order, which variant, what to " +
+        "rewrite — by how well it evidences what this specific posting asks for, favouring " +
+        "its stated must-haves and its own vocabulary over generic strength.";
 
     /// <inheritdoc />
     public TailoringGraph Create(TailoringRequest request)
@@ -142,6 +148,7 @@ public sealed class TailoringGraphFactory(
 
             .AddNode(BuildBrief, (ctx, _) =>
             {
+                var posting = ctx.Get<JobPosting>(FetchJd);
                 var analysis = ctx.Get<JobAnalysis>(AnalyzeJd);
                 var baseDoc = ctx.Get<ResumeDocument>(BuildBase);
 
@@ -160,10 +167,10 @@ public sealed class TailoringGraphFactory(
                     Skills = ctx.Get<IReadOnlyList<ScoredCandidate>>(ScoreSkills),
                 };
 
-                var brief = briefBuilder.Build(analysis, candidates, baseDoc, options);
+                var brief = briefBuilder.Build(posting, analysis, candidates, baseDoc, options);
                 return Task.FromResult<object?>(brief);
             })
-            .DependsOn(ScoreExperience, ScoreProjects, ScoreSkills)
+            .DependsOn(FetchJd, ScoreExperience, ScoreProjects, ScoreSkills)
 
             .AddNode(ProposeCommands, async (ctx, ct) =>
             {
@@ -303,6 +310,11 @@ public sealed class TailoringGraphFactory(
     /// </summary>
     private static int MaxOutputTokensFor(ModelEffort effort) => effort switch
     {
+        // Full rewrites every bullet it touches and may retagline every project, so its
+        // ceiling is sized from the work rather than from a typical figure: ~40 bullets at
+        // ~90 tokens per rewrite command, plus taglines and a summary, lands near 5k. 10240
+        // leaves the headroom that made every tier below it truncate when it was missing.
+        ModelEffort.Full => 10240,
         ModelEffort.Maximum => 4096,
         ModelEffort.Thorough => 2048,
         _ => 1024,
@@ -321,8 +333,24 @@ public sealed class TailoringGraphFactory(
             "candidate's knowledge base already evidences elsewhere — never a keyword the " +
             "candidate cannot support.";
 
-        return effort == ModelEffort.Maximum
-            ? prompt + " Always propose a setSummary command tailored specifically to this job."
+        if (effort < ModelEffort.Maximum)
+        {
+            return prompt;
+        }
+
+        prompt += " Always propose a setSummary command tailored specifically to this job.";
+
+        return effort == ModelEffort.Full
+            ? prompt +
+              " This run is Full effort: treat every line as yours to improve. Rewrite any " +
+              "bullet whose phrasing does not serve this posting, on every included entry — " +
+              "you are not rationing rewrites here. The TAGLINES section lists each project's " +
+              "id and its current one-line description; propose a setTagline command, keyed " +
+              "by that project id, for any whose description could speak more directly to " +
+              "this job. The single " +
+              "rule that does not relax: every claim must already be supported by the " +
+              "candidate's existing text. Rephrase, reframe, and re-emphasize freely; never " +
+              "add a metric, technology, employer, or date that is not already there."
             : prompt;
     }
 

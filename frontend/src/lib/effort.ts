@@ -40,6 +40,12 @@ export const EFFORT_LEVELS: readonly EffortLevelInfo[] = [
     estimatedOutputTokens: 2000,
     description: 'Raises the rewrite cap furthest; every run gets a fresh summary.',
   },
+  {
+    value: 'full',
+    label: 'Full AI',
+    estimatedOutputTokens: 8000,
+    description: 'Rewrites every bullet and project description for this job. No rewrite cap.',
+  },
 ];
 
 /** The contract default — reproduces pre-effort behaviour when sent as-is. */
