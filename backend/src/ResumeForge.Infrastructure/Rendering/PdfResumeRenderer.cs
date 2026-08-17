@@ -41,19 +41,129 @@ public sealed class PdfResumeRenderer
     /// </summary>
     private const float BaseLineHeight = 1.15f;
 
+    /// <summary>
+    /// The uniform zoom levels the fit search may choose from, ascending. A resume whose
+    /// content stops well short of the bottom of its last page reads as an unfinished
+    /// document rather than a concise one, and one that spills a few lines onto an otherwise
+    /// empty page reads worse still. Scaling the whole composition — type, spacing, and rules
+    /// together — keeps every proportion the layout was designed with, which independently
+    /// nudging font sizes would not.
+    /// </summary>
+    /// <remarks>
+    /// Quantized rather than continuous so the chosen zoom is reproducible and reviewable:
+    /// the same document always renders at the same step. Beyond roughly +20% the page stops
+    /// looking like the designed layout and starts looking like a photocopier setting.
+    ///
+    /// Starts at 1.0 and only grows. Shrinking below the authored size would let an
+    /// over-long resume squeeze itself under the page budget, which is the page-budget
+    /// enforcer's job to solve by excluding the lowest-scoring entries (CONTRACTS.md §6) —
+    /// quietly reducing the type instead would leave that contract's deterministic cut order
+    /// unreachable. Fitting therefore never changes how many pages a document needs; it only
+    /// decides how well it occupies them.
+    /// </remarks>
+    private static readonly float[] FitScales = [1.00f, 1.04f, 1.08f, 1.12f, 1.16f, 1.20f];
+
+    /// <summary>
+    /// Multipliers on <see cref="BaseItemSpacing"/> the fit search may choose from, ascending.
+    /// </summary>
+    /// <remarks>
+    /// Zoom alone cannot close a gap at the foot of the page, because growing the type also
+    /// narrows the text box: lines rewrap, the content grows taller than the zoom implies, and
+    /// the spill point arrives while whitespace remains. Spacing has no such coupling — it
+    /// absorbs leftover height without touching a single line break — so it is searched second,
+    /// after zoom has been maximized. It applies between top-level items (sections, entries),
+    /// never within a bullet list, so the air lands where a typesetter would put it.
+    /// </remarks>
+    private static readonly float[] FitSpacings = [1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f];
+
+    /// <summary>The gap between top-level column items at spacing multiplier <c>1.0</c>.</summary>
+    private const float BaseItemSpacing = 2f;
+
     /// <summary>Renders <paramref name="doc"/> to PDF, alongside the resulting page count.</summary>
+    /// <remarks>
+    /// The layout is chosen by <see cref="ChooseFit"/> so the content fills its last page
+    /// instead of leaving a ragged gap. Page count is reported after fitting, and fitting never
+    /// increases it, so callers that budget by page count (the page-budget enforcer) see the
+    /// same number they would have without it.
+    /// </remarks>
     public PdfRenderResult Render(ResumeDocument doc)
     {
         ArgumentNullException.ThrowIfNull(doc);
 
-        var document = BuildDocument(doc);
-        var content = document.GeneratePdf();
-        var pageCount = document.GenerateImages(new ImageGenerationSettings { RasterDpi = PageCountRasterDpi }).Count();
+        var fit = ChooseFit(doc);
+        var document = BuildDocument(doc, fit.Scale, fit.Spacing);
 
-        return new PdfRenderResult { Content = content, PageCount = pageCount };
+        return new PdfRenderResult
+        {
+            Content = document.GeneratePdf(),
+            PageCount = fit.PageCount,
+            Scale = fit.Scale,
+            Spacing = fit.Spacing,
+        };
     }
 
-    private static IDocument BuildDocument(ResumeDocument doc)
+    private readonly record struct FitChoice(float Scale, float Spacing, int PageCount);
+
+    /// <summary>
+    /// Picks the largest zoom, then the most generous spacing, that still fits the fewest
+    /// pages the document can occupy.
+    /// </summary>
+    /// <remarks>
+    /// The authored layout establishes the page count to aim for, and the searches then spend
+    /// whatever room is left on that same number of pages. Zoom is maximized before spacing
+    /// because type size carries legibility while spacing only carries air — spending the slack
+    /// the other way round would yield a small resume swimming in white.
+    ///
+    /// Both searches are binary, which requires page count to be monotonic in each dimension:
+    /// neither a larger zoom nor a wider gap can ever make a document need *fewer* pages.
+    /// </remarks>
+    private FitChoice ChooseFit(ResumeDocument doc)
+    {
+        var targetPages = CountPages(doc, FitScales[0], FitSpacings[0]);
+
+        var scale = FitScales[LargestFitting(
+            FitScales.Length, i => CountPages(doc, FitScales[i], FitSpacings[0]) <= targetPages)];
+
+        var spacing = FitSpacings[LargestFitting(
+            FitSpacings.Length, i => CountPages(doc, scale, FitSpacings[i]) <= targetPages)];
+
+        return new FitChoice(scale, spacing, targetPages);
+    }
+
+    /// <summary>
+    /// The highest index in <c>[0, count)</c> that satisfies <paramref name="fits"/>, assuming
+    /// the predicate is monotonically decreasing (true up to some index, false after). Index 0
+    /// is the floor: it is the tightest option and is returned untested when nothing else fits.
+    /// </summary>
+    private static int LargestFitting(int count, Func<int, bool> fits)
+    {
+        var low = 1;
+        var high = count - 1;
+        var best = 0;
+
+        while (low <= high)
+        {
+            var mid = (low + high) / 2;
+            if (fits(mid))
+            {
+                best = mid;
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+
+        return best;
+    }
+
+    private int CountPages(ResumeDocument doc, float scale, float spacing) =>
+        BuildDocument(doc, scale, spacing)
+            .GenerateImages(new ImageGenerationSettings { RasterDpi = PageCountRasterDpi })
+            .Count();
+
+    private static IDocument BuildDocument(ResumeDocument doc, float scale, float spacing)
     {
         return Document.Create(container =>
         {
@@ -71,9 +181,14 @@ public sealed class PdfResumeRenderer
                 page.DefaultTextStyle(x => x.FontSize(9f).FontColor(InkColor).LineHeight(BaseLineHeight)
                     .DisableFontFeature(FontFeatures.StandardLigatures));
 
-                page.Content().Column(column =>
+                // Scale wraps the whole content box: QuestPDF lays the column out in a
+                // correspondingly narrower/wider space and then draws it zoomed, so type,
+                // spacing, and rules all grow together and the margins stay where the page
+                // set them. Applied here rather than to individual elements so no composer
+                // needs to know the fit search exists.
+                page.Content().Scale(scale).Column(column =>
                 {
-                    column.Spacing(2f);
+                    column.Spacing(BaseItemSpacing * spacing);
 
                     ComposeHeader(column, doc.Basics);
 
@@ -432,4 +547,14 @@ public sealed record PdfRenderResult
 
     /// <summary>The number of pages QuestPDF laid the document out into.</summary>
     public required int PageCount { get; init; }
+
+    /// <summary>
+    /// The uniform zoom the fit search settled on (<c>1.0</c> = the layout as authored), and
+    /// the multiplier it applied to the gap between top-level items. Exposed because "why is
+    /// this resume set larger than that one?" is otherwise unanswerable from the output alone.
+    /// </summary>
+    public required float Scale { get; init; }
+
+    /// <inheritdoc cref="Scale"/>
+    public required float Spacing { get; init; }
 }

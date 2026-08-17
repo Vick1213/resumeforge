@@ -32,6 +32,41 @@ public sealed class PdfResumeRendererTests
     }
 
     [Fact]
+    public void Grows_a_sparse_document_to_fill_the_page_it_already_occupies()
+    {
+        // Nothing but a name: as much empty page as this layout can produce, so the fit
+        // search has every reason to spend its whole range.
+        var sparse = TestData.Document(basics: TestData.Basics("Jordan Rivera"), sectionOrder: []);
+
+        var result = _renderer.Render(sparse);
+
+        result.PageCount.ShouldBe(1);
+        result.Scale.ShouldBeGreaterThan(1.0f);
+        result.Spacing.ShouldBeGreaterThan(1.0f);
+    }
+
+    [Fact]
+    public void Never_shrinks_an_overlong_document_to_win_back_a_page()
+    {
+        // Far more content than one page holds. Fitting must not scale it down to squeeze
+        // under a page budget: excluding the lowest-scoring entries is PageBudgetEnforcer's
+        // job (CONTRACTS.md §6), and quietly reducing the type instead would leave that
+        // contract's deterministic cut order unreachable.
+        var overlong = RenderingTestData.Document() with
+        {
+            Projects = [.. Enumerable.Range(0, 60).Select(i => TestData.Project(
+                $"prj:filler-{i}", $"Filler Project {i}", new DateOnly(2021, 1, 1), new DateOnly(2022, 1, 1),
+                bullets: [TestData.Bullet($"prj:filler-{i}#0", "Shipped a service handling a large volume of traffic daily.")]))],
+        };
+
+        var result = _renderer.Render(overlong);
+
+        result.PageCount.ShouldBeGreaterThan(1);
+        result.Scale.ShouldBeGreaterThanOrEqualTo(1.0f);
+        result.Spacing.ShouldBeGreaterThanOrEqualTo(1.0f);
+    }
+
+    [Fact]
     public void Renders_successfully_with_every_section_populated()
     {
         var project = TestData.Project(
