@@ -173,7 +173,7 @@ public sealed class TailoringGraphFactory(
                     System = SystemPromptFor(request.Effort),
                     User = brief,
                     SchemaName = "tailor-commands",
-                    MaxOutputTokens = 1024,
+                    MaxOutputTokens = MaxOutputTokensFor(request.Effort),
                     Temperature = 0.2,
                     CacheKey = $"tailor:{request.JobId}:{request.BaseResumeId}",
                 };
@@ -290,6 +290,24 @@ public sealed class TailoringGraphFactory(
     /// <see cref="ModelEffort.Maximum"/>, an instruction to regenerate the summary every
     /// run rather than leaving it as-is (CONTRACTS.md §6's effort table).
     /// </summary>
+    /// <summary>
+    /// Keeps the output-token cap in step with what each effort licenses. CONTRACTS.md §6's
+    /// table gives *typical* output as ~200/~600/~1,200/~2,000 tokens; this caps at roughly
+    /// double that, because a cap is a ceiling for the worst case and half of all runs exceed
+    /// a typical figure by definition. <see cref="ModelEffort.Maximum"/> alone permits 20
+    /// rewrites of up to 300 characters (~1,800 tokens before <c>setSummary</c>'s prose and the
+    /// ordering arrays are counted), so a cap set near the typical figure truncates routinely —
+    /// which is exactly what a 2,048-token ceiling did here. Floored at the previous fixed
+    /// budget so the cheaper tiers are unaffected. Overrun is no longer silent regardless: see
+    /// <c>ModelResponseTruncatedException</c>.
+    /// </summary>
+    private static int MaxOutputTokensFor(ModelEffort effort) => effort switch
+    {
+        ModelEffort.Maximum => 4096,
+        ModelEffort.Thorough => 2048,
+        _ => 1024,
+    };
+
     private static string SystemPromptFor(ModelEffort effort)
     {
         if (effort < ModelEffort.Thorough)
