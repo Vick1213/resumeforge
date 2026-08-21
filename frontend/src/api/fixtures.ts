@@ -498,8 +498,8 @@ export const fixtureRejectedCommands: TailoringResult['commands']['rejected'] = 
       text: 'Designed an event-sourced billing pipeline in Rust processing 2M events/day with exactly-once semantics.',
       rationale: 'Requirement lists Rust as a nice-to-have',
     },
-    reason: 'Keyword "rust" is not evidenced anywhere in the knowledge base — no entry, bullet, or skill group supports it.',
-    code: 'unsupported-keyword',
+    reason: 'InjectKeywords text is 118 characters, which wraps onto 2 lines and leaves the last 11 % full. Write it to 1-108 characters or 169-210 characters.',
+    code: 'ragged-line-fill',
   },
 ];
 

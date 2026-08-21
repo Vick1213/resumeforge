@@ -361,15 +361,14 @@ export interface SetSectionOrderCommand extends TailorCommandBase {
 
 /**
  * Weaves job-description keywords into an existing bullet. Only available at
- * `Thorough` effort and above, and only for keywords the knowledge base
- * already evidences — see `unsupported-keyword` and `op-unavailable-at-effort`
- * below. This is the honest form of ATS keyword optimization: it surfaces
- * terms the person can actually support and refuses the rest.
+ * `Thorough` effort and above (`op-unavailable-at-effort` below). The injected
+ * text still passes the fabrication guard, but the keyword list itself is no
+ * longer checked against the knowledge base.
  */
 export interface InjectKeywordsCommand extends TailorCommandBase {
   op: 'injectKeywords';
   target: string;
-  /** Normalized keyword names, each independently evidenced in the KB. */
+  /** Keyword names woven into the text. */
   keywords: string[];
   /** The rewritten bullet with the keywords woven in. */
   text: string;
@@ -400,7 +399,6 @@ export type RejectionCode =
   | 'fabricated-metric'
   | 'rewrite-budget-exceeded'
   | 'duplicate-order-entry'
-  | 'unsupported-keyword'
   | 'op-unavailable-at-effort'
   | (string & {});
 

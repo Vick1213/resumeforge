@@ -670,7 +670,13 @@ public sealed class CommandExecutor(TimeProvider timeProvider) : ICommandExecuto
 
         public void ApplyEmphasizeSkills(EmphasizeSkillsCommand command, List<ResumeDiffEntry> diff)
         {
-            var targets = new HashSet<string>(command.Skills, StringComparer.Ordinal);
+            // Skills are stored by their normalized form ("python", "cicd"); the model may
+            // send them however the posting spelled them ("Python", "CI/CD"). Normalizing
+            // here is what lets those match — the same fix CommandValidator's keyword
+            // handling needed.
+            var targets = new HashSet<string>(
+                command.Skills.Select(Domain.Text.SkillNormalizer.Normalize).Where(s => s.Length > 0),
+                StringComparer.Ordinal);
             if (targets.Count == 0)
             {
                 return;

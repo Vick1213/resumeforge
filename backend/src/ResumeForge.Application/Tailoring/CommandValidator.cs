@@ -1,7 +1,6 @@
 using ResumeForge.Domain.Formatting;
 using ResumeForge.Domain.Ids;
 using ResumeForge.Domain.Resume;
-using ResumeForge.Domain.Text;
 
 namespace ResumeForge.Application.Tailoring;
 
@@ -19,11 +18,14 @@ namespace ResumeForge.Application.Tailoring;
 /// <see cref="IFabricationGuard"/>.</item>
 /// <item>Total accepted <see cref="RewriteCommand"/>s does not exceed <see cref="TailorOptions.MaxRewrites"/>.</item>
 /// <item><see cref="OrderCommand.Order"/> contains no duplicates.</item>
-/// <item><see cref="InjectKeywordsCommand"/> passes rule 3's fabrication guard and every
-/// keyword it names is already evidenced in a skill group or in the text of some entry or
-/// bullet (code <c>unsupported-keyword</c> otherwise); it is additionally rejected with
-/// <c>op-unavailable-at-effort</c> below <see cref="ModelEffort.Thorough"/>. This rule
-/// never relaxes at any effort level.</item>
+/// <item><see cref="InjectKeywordsCommand"/> passes rule 3's fabrication guard on its
+/// replacement text and is rejected with <c>op-unavailable-at-effort</c> below
+/// <see cref="ModelEffort.Thorough"/>. The former KB-evidence check on the keyword list
+/// (<c>unsupported-keyword</c>) was removed at the user's direction on 2026-08-21: its
+/// exact-substring matching rejected vocabulary framings ("AI/ML", "cloud-native") that the
+/// resume plainly supports, and the fabrication guard on the injected text still prevents
+/// invented metrics. The system prompt still instructs the model to only use keywords the
+/// candidate's material supports.</item>
 /// <item>Replacement text — a <see cref="RewriteCommand"/>'s or an
 /// <see cref="InjectKeywordsCommand"/>'s — is not ragged: it either fits one line or fills
 /// its last one to <see cref="BulletLineFit.MinLastLineFill"/> (code <c>ragged-line-fill</c>).
@@ -334,15 +336,6 @@ public sealed class CommandValidator(IFabricationGuard fabricationGuard) : IComm
                     return true;
                 }
 
-                if (TryFindUnsupportedKeyword(inject.Keywords, document, out var unsupportedKeyword))
-                {
-                    rejection = Reject(
-                        command,
-                        $"'{unsupportedKeyword}' is not evidenced anywhere in the knowledge base — not in a skill group, and not in the text of any entry or bullet.",
-                        "unsupported-keyword");
-                    return true;
-                }
-
                 if (options.Effort < ModelEffort.Thorough)
                 {
                     rejection = Reject(
@@ -522,127 +515,6 @@ public sealed class CommandValidator(IFabricationGuard fabricationGuard) : IComm
             "ragged-line-fill");
         return true;
     }
-
-    /// <summary>
-    /// Rule 6's KB-evidence check. A keyword is evidenced when some skill in some skill
-    /// group normalizes to it exactly, or when it appears — after the same punctuation- and
-    /// whitespace-stripping normalization <see cref="SkillNormalizer"/> uses everywhere else
-    /// in the system — as a substring of the text of some entry (role, organization, project
-    /// name/tagline, institution, credential, certification name/issuer) or some bullet
-    /// (including its variants). <paramref name="document"/> is the freshly built base
-    /// resume, which — before any command has executed — is a complete, unfiltered
-    /// projection of the knowledge base, so searching it is equivalent to searching the KB
-    /// itself.
-    /// </summary>
-    private static bool TryFindUnsupportedKeyword(IReadOnlyList<string> keywords, ResumeDocument document, out string? unsupported)
-    {
-        foreach (var keyword in keywords)
-        {
-            if (!IsKeywordEvidenced(keyword, document))
-            {
-                unsupported = keyword;
-                return true;
-            }
-        }
-
-        unsupported = null;
-        return false;
-    }
-
-    private static bool IsKeywordEvidenced(string keyword, ResumeDocument document)
-    {
-        if (string.IsNullOrWhiteSpace(keyword))
-        {
-            return false;
-        }
-
-        foreach (var group in document.Skills)
-        {
-            foreach (var skill in group.Items)
-            {
-                if (string.Equals(skill.Normalized, keyword, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-        }
-
-        foreach (var entry in document.Experience)
-        {
-            if (TextEvidences(entry.Role, keyword) || TextEvidences(entry.Organization, keyword))
-            {
-                return true;
-            }
-
-            if (BulletsEvidence(entry.Bullets, keyword))
-            {
-                return true;
-            }
-        }
-
-        foreach (var entry in document.Projects)
-        {
-            if (TextEvidences(entry.Name, keyword) || TextEvidences(entry.Tagline, keyword))
-            {
-                return true;
-            }
-
-            if (BulletsEvidence(entry.Bullets, keyword))
-            {
-                return true;
-            }
-        }
-
-        foreach (var entry in document.Education)
-        {
-            if (TextEvidences(entry.Institution, keyword) || TextEvidences(entry.Credential, keyword))
-            {
-                return true;
-            }
-
-            foreach (var highlight in entry.Highlights)
-            {
-                if (TextEvidences(highlight, keyword))
-                {
-                    return true;
-                }
-            }
-        }
-
-        foreach (var entry in document.Certifications)
-        {
-            if (TextEvidences(entry.Name, keyword) || TextEvidences(entry.Issuer, keyword))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool BulletsEvidence(IReadOnlyList<Bullet> bullets, string keyword)
-    {
-        foreach (var bullet in bullets)
-        {
-            if (TextEvidences(bullet.Text, keyword))
-            {
-                return true;
-            }
-
-            foreach (var variant in bullet.Variants)
-            {
-                if (TextEvidences(variant, keyword))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private static bool TextEvidences(string? text, string normalizedKeyword) =>
-        !string.IsNullOrWhiteSpace(text) && SkillNormalizer.Normalize(text).Contains(normalizedKeyword, StringComparison.Ordinal);
 
     private static RejectedCommand Reject(TailorCommand command, string reason, string code) =>
         new() { Command = command, Reason = reason, Code = code };

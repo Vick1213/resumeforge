@@ -507,7 +507,7 @@ public sealed class TailoringGraphFactory(
     /// <summary>
     /// Builds the system prompt for a given effort: the base instructions plus, at
     /// <see cref="ModelEffort.Thorough"/> and above, permission to propose
-    /// <c>injectKeywords</c> (still bound by the fabrication guard and KB-evidence rule
+    /// <c>injectKeywords</c> (its text still bound by the fabrication guard
     /// enforced deterministically by <see cref="CommandValidator"/>), and at
     /// <see cref="ModelEffort.Maximum"/>, an instruction to regenerate the summary every
     /// run rather than leaving it as-is (CONTRACTS.md §6's effort table).
@@ -669,7 +669,8 @@ public sealed class TailoringGraphFactory(
     /// failed a deterministic check the model can satisfy on another attempt. Codes like
     /// <c>unknown-target</c>, <c>op-unavailable-at-effort</c>, or <c>experience-protected</c>
     /// are structural — retrying them re-litigates a rule that will never relax — so they
-    /// stay rejected without another call.
+    /// stay rejected without another call. (The former <c>unsupported-keyword</c> code no
+    /// longer exists: the KB-evidence check was removed at the user's direction.)
     /// </summary>
     private static readonly HashSet<string> RepairableCodes = new(StringComparer.Ordinal)
     {

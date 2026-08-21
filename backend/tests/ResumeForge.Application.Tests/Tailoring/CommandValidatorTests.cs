@@ -439,10 +439,12 @@ public sealed class CommandValidatorTests
     }
 
     [Fact]
-    public void InjectKeywords_naming_a_keyword_absent_from_the_kb_is_rejected_even_at_maximum_effort()
+    public void InjectKeywords_naming_a_keyword_absent_from_the_kb_is_accepted()
     {
-        // The line this rule exists to hold: keyword optimization must never become
-        // fabrication, and that guarantee does not relax at the highest effort level.
+        // The KB-evidence check on the keyword list was removed at the user's direction
+        // (2026-08-21): its exact-substring matching rejected vocabulary framings the resume
+        // plainly supported. The injected text still passes the fabrication guard, which is
+        // what actually prevents invented metrics.
         var doc = NewDocument();
         var command = new InjectKeywordsCommand
         {
@@ -453,8 +455,7 @@ public sealed class CommandValidatorTests
 
         var result = _validator.Validate([command], doc, Options(effort: ModelEffort.Maximum));
 
-        result.Accepted.ShouldBeEmpty();
-        result.Rejected.Single().Code.ShouldBe("unsupported-keyword");
+        result.Accepted.ShouldBe([command]);
     }
 
     [Fact]

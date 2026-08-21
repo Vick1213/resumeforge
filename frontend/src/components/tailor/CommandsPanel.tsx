@@ -28,26 +28,20 @@ function describeCommand(command: TailorCommand): string {
 }
 
 /**
- * `unsupported-keyword` is the fabrication guard working as intended, not a
- * failure — the model asked for a keyword the knowledge base doesn't
- * evidence, and the system said no. `op-unavailable-at-effort` is a
- * configuration gap, not a guard trip. Both get a distinct tone and a plain
- * explanation instead of blending into the generic "rejected" red.
+ * `op-unavailable-at-effort` is a configuration gap, not a guard trip — it
+ * gets a distinct tone and a plain explanation instead of blending into the
+ * generic "rejected" red. (`unsupported-keyword` no longer exists: the
+ * KB-evidence check on injected keywords was removed at the user's direction.)
  */
 const REJECTION_TONE: Partial<Record<RejectionCode, BadgeTone>> = {
-  'unsupported-keyword': 'info',
   'op-unavailable-at-effort': 'warning',
 };
 
 const REJECTION_BORDER: Partial<Record<RejectionCode, string>> = {
-  'unsupported-keyword': 'border-[var(--info)] bg-[var(--info-soft)]',
   'op-unavailable-at-effort': 'border-[var(--warning)] bg-[var(--warning-soft)]',
 };
 
 const REJECTION_EXPLANATION: Partial<Record<RejectionCode, string>> = {
-  'unsupported-keyword':
-    'This is the fabrication guard working as intended: the model tried to add a keyword your knowledge base ' +
-    "doesn't evidence anywhere, and the system refused rather than let it onto your resume.",
   'op-unavailable-at-effort':
     'Keyword injection only runs at Thorough effort or above. Raise the effort level and re-run tailoring to enable it.',
 };

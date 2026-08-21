@@ -25,7 +25,9 @@ describe('CommandsPanel', () => {
     expect(screen.getByText('distributed systems')).toBeInTheDocument();
   });
 
-  it('renders an unsupported-keyword rejection with a clear explanation', () => {
+  it('renders an unrecognized rejection code generically without a canned explanation', () => {
+    // The KB-evidence check (unsupported-keyword) no longer exists server-side; any code the
+    // panel does not recognize should still render its reason legibly.
     const commands: CommandValidationResult = {
       accepted: [],
       rejected: [
@@ -36,17 +38,16 @@ describe('CommandsPanel', () => {
             keywords: ['rust'],
             text: 'Designed an event-sourced billing pipeline in Rust.',
           },
-          reason: 'Keyword "rust" is not evidenced anywhere in the knowledge base.',
-          code: 'unsupported-keyword',
+          reason: 'Some future rule rejected this command.',
+          code: 'some-future-code',
         },
       ],
     };
 
     render(<CommandsPanel commands={commands} />);
 
-    expect(screen.getByText('unsupported-keyword')).toBeInTheDocument();
-    expect(screen.getByText('Keyword "rust" is not evidenced anywhere in the knowledge base.')).toBeInTheDocument();
-    expect(screen.getByText(/fabrication guard working as intended/)).toBeInTheDocument();
+    expect(screen.getByText('some-future-code')).toBeInTheDocument();
+    expect(screen.getByText('Some future rule rejected this command.')).toBeInTheDocument();
   });
 
   it('renders an op-unavailable-at-effort rejection explaining the effort gate', () => {

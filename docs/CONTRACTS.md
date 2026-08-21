@@ -625,13 +625,15 @@ reported, never silently dropped:
 4. Total `RewriteCommand` count ≤ `TailorOptions.MaxRewrites`, which is derived from
    effort — see below.
 5. `OrderCommand.Order` contains no duplicates.
-6. `InjectKeywordsCommand` passes rule 3's fabrication guard **and** every keyword it
-   names is already evidenced somewhere in the knowledge base — in a skill group, or in
-   the text of some entry or bullet. A keyword the person cannot support is rejected
-   with code `unsupported-keyword`, never injected. This rule is what separates keyword
-   optimization from lying on a resume, and it is not negotiable at any effort level.
-   The command is additionally rejected with `op-unavailable-at-effort` when the run's
-   effort is below `Thorough`.
+6. `InjectKeywordsCommand` passes rule 3's fabrication guard on its replacement text
+   (since `inject.Text` is a full replacement bullet exactly like a rewrite's), and is
+   rejected with `op-unavailable-at-effort` when the run's effort is below `Thorough`.
+   The keyword list itself is no longer checked against the knowledge base: the former
+   `unsupported-keyword` rule was removed at the user's direction (2026-08-21) — its
+   exact-substring evidence matching rejected vocabulary framings ("AI/ML",
+   "cloud-native") the resume plainly supports, and the fabrication guard on the injected
+   text is what actually prevents invented claims. The system prompt still instructs the
+   model to use only keywords the candidate's material supports.
 7. Replacement text — a `RewriteCommand`'s or an `InjectKeywordsCommand`'s — is not
    **ragged**: it either fits on one rendered line or fills its last line to at least
    `BulletLineFit.MinLastLineFill` (55%) of the column width, rejected with code
@@ -977,7 +979,7 @@ attempt — `ragged-line-fill`, `rewrite-too-long`, `rewrite-multiline`,
 broke, and the text currently on the page) and validates what comes back under the same
 rules, with the rewrite budget reduced by what the first round already spent. Structural
 rejections (`unknown-target`, `op-unavailable-at-effort`, `experience-protected`,
-`unsupported-keyword`, `malformed-command`) are never retried. The node is advisory in the
+`malformed-command`) are never retried. The node is advisory in the
 same way `ats-review` is: any failure returns the first round's validation unchanged, and
 when there is nothing to repair it is a free pass-through that spends no tokens. Without
 this node, every improvement the model proposed and the validator refused silently
