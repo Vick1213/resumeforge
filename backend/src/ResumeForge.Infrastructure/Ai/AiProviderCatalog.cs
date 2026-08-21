@@ -101,6 +101,19 @@ public static class AiProviderCatalog
         new[] { DeepSeek, OpenAi, LmStudio, Anthropic, Heuristic }
             .ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Every environment variable some preset reads an API key from, in a stable order.
+    /// Exposed so a host that must run key-free — the integration-test factory, which resolves
+    /// <c>ILanguageModel</c> to the no-network heuristic implementation — can clear all of
+    /// them without restating the list and quietly missing whichever provider was added last.
+    /// </summary>
+    public static readonly IReadOnlyList<string> KeyEnvironmentVariables =
+        [.. ByName.Values
+            .Select(p => p.KeyEnvironmentVariable)
+            .Where(v => !string.IsNullOrEmpty(v))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)!];
+
     /// <summary>Looks up the preset registered under <paramref name="name"/> (case-insensitive).</summary>
     public static bool TryGetPreset(string name, out AiProviderPreset preset) =>
         ByName.TryGetValue(name, out preset!);

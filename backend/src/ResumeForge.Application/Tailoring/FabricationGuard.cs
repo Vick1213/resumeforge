@@ -6,7 +6,10 @@ namespace ResumeForge.Application.Tailoring;
 /// percentages, currency, multipliers like <c>"3x"</c>, and identifiers like <c>"p99"</c>)
 /// and proper-noun-like tokens (capitalized words with a following lowercase letter).
 /// Tokens are compared after stripping surrounding punctuation, commas, currency symbols,
-/// and casing, so equivalent formattings never register as a change.
+/// and casing, so equivalent formattings never register as a change. A rewrite may neither
+/// introduce a number the original did not have nor drop every number the original did —
+/// the guard runs in both directions, because a resume loses as much to a quietly deleted
+/// metric as it does to an invented one.
 /// </summary>
 public sealed class FabricationGuard : IFabricationGuard
 {
@@ -30,17 +33,24 @@ public sealed class FabricationGuard : IFabricationGuard
             return false;
         }
 
-        var originalHadEvidence = originalNumbers.Count > 0 || originalProperNouns.Count > 0;
-        if (originalHadEvidence)
+        // A quantified bullet is the whole reason the bullet is on the page: "cut spend by
+        // ~$2K/month" and "redesigned the deployment pipeline" describe the same work, and
+        // only one of them is evidence. Losing the number is therefore treated as its own
+        // failure rather than being excused by a surviving proper noun — a rewrite that keeps
+        // "AWS" while dropping "$2K/month" trades the claim for the tech stack.
+        if (originalNumbers.Count > 0 && !rewrittenNumbers.Overlaps(originalNumbers))
         {
-            var retainsNumber = rewrittenNumbers.Overlaps(originalNumbers);
-            var retainsProperNoun = rewrittenProperNouns.Overlaps(originalProperNouns);
+            var dropped = originalNumbers.OrderBy(n => n, StringComparer.Ordinal);
+            reason = $"Rewrite drops every quantified result from the original: {string.Join(", ", dropped)}.";
+            return false;
+        }
 
-            if (!retainsNumber && !retainsProperNoun)
-            {
-                reason = "Rewrite drops every number and proper noun present in the original bullet.";
-                return false;
-            }
+        if (originalProperNouns.Count > 0 &&
+            originalNumbers.Count == 0 &&
+            !rewrittenProperNouns.Overlaps(originalProperNouns))
+        {
+            reason = "Rewrite drops every number and proper noun present in the original bullet.";
+            return false;
         }
 
         reason = null;

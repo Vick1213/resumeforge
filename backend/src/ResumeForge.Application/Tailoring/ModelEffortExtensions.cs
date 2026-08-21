@@ -29,4 +29,17 @@ public static class ModelEffortExtensions
     /// </summary>
     public static int ResolveMaxRewrites(this ModelEffort effort, int? explicitOverride) =>
         explicitOverride ?? effort.MaxRewrites();
+
+    /// <summary>
+    /// Whether the run spends a second model call on the <c>ats-review</c> gap scan
+    /// (CONTRACTS.md §6 "ATS review pass"). True from <see cref="ModelEffort.Standard"/> up.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ModelEffort.Minimal"/> is the one tier that skips it, and for a reason that
+    /// is about usefulness rather than cost: Minimal cannot rewrite a bullet at all
+    /// (<see cref="MaxRewrites"/> is 0 there), so a review whose whole output is "work these
+    /// terms into these bullets" would be handing the command pass a list of things it is
+    /// forbidden to do. Every tier that can act on the findings pays for them.
+    /// </remarks>
+    public static bool RunsAtsReview(this ModelEffort effort) => effort >= ModelEffort.Standard;
 }

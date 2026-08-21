@@ -122,16 +122,18 @@ public sealed class HtmlResumeRenderer
             return;
         }
 
-        sb.Append("<section class=\"section\">\n<h2>Skills</h2>\n<dl class=\"skills\">\n");
+        sb.Append("<section class=\"section\">\n<h2>Skills</h2>\n<div class=\"skills\">\n");
 
         foreach (var group in included)
         {
-            sb.Append("<div class=\"skill-row\"><dt>").Append(Enc(group.Label)).Append("</dt><dd>");
+            // Label inline, leading the same line its skills run on — see
+            // PdfResumeRenderer.ComposeSkills for why the fixed label column was dropped.
+            sb.Append("<p class=\"skill-row\"><span class=\"skill-label\">").Append(Enc(group.Label)).Append(":</span> ");
             sb.Append(string.Join(", ", group.Items.Select(s => s.Emphasized ? $"<strong>{Enc(s.Name)}</strong>" : Enc(s.Name))));
-            sb.Append("</dd></div>\n");
+            sb.Append("</p>\n");
         }
 
-        sb.Append("</dl>\n</section>\n");
+        sb.Append("</div>\n</section>\n");
     }
 
     private static void AppendExperience(StringBuilder sb, IReadOnlyList<ExperienceEntry> entries)
@@ -187,9 +189,9 @@ public sealed class HtmlResumeRenderer
 
             sb.Append("</div>\n");
 
-            if (!string.IsNullOrWhiteSpace(entry.Tagline))
+            if (entry.ShouldRenderTagline(out var tagline))
             {
-                sb.Append("<p class=\"tagline\">").Append(Enc(entry.Tagline)).Append("</p>\n");
+                sb.Append("<p class=\"tagline\">").Append(Enc(tagline)).Append("</p>\n");
             }
 
             var links = new List<string>();
@@ -230,6 +232,8 @@ public sealed class HtmlResumeRenderer
 
             sb.Append("</div>\n");
 
+            // Location, GPA, and every highlight on one line — see
+            // PdfResumeRenderer.EducationMetaLine for why coursework stopped being a bullet.
             var metaParts = new List<string>();
             if (!string.IsNullOrWhiteSpace(entry.Location))
             {
@@ -241,12 +245,12 @@ public sealed class HtmlResumeRenderer
                 metaParts.Add($"GPA: {gpa.ToString("0.00", CultureInfo.InvariantCulture)}");
             }
 
+            metaParts.AddRange(entry.Highlights.Where(h => !string.IsNullOrWhiteSpace(h)).Select(Enc));
+
             if (metaParts.Count > 0)
             {
                 sb.Append("<p class=\"location\">").Append(string.Join(" <span class=\"sep\">·</span> ", metaParts)).Append("</p>\n");
             }
-
-            AppendBullets(sb, entry.Highlights);
             sb.Append("</article>\n");
         }
 
@@ -275,7 +279,7 @@ public sealed class HtmlResumeRenderer
 
             if (entry.IssuedOn is { } issuedOn)
             {
-                meta.Add(Enc(issuedOn.ToString("MMM yyyy", CultureInfo.InvariantCulture)));
+                meta.Add(Enc(DateRangeFormatter.FormatMonth(issuedOn)));
             }
 
             if (meta.Count > 0)
@@ -313,7 +317,7 @@ public sealed class HtmlResumeRenderer
             return DateRangeFormatter.Format(s, end);
         }
 
-        return end is { } e ? e.ToString("MMM yyyy", CultureInfo.InvariantCulture) : null;
+        return end is { } e ? DateRangeFormatter.FormatMonth(e) : null;
     }
 
     private static string Enc(string value) => WebUtility.HtmlEncode(value);
@@ -335,9 +339,12 @@ public sealed class HtmlResumeRenderer
           font-size: 14px;
         }
         .resume { max-width: 780px; margin: 0 auto; padding: 24px 32px 36px; }
-        .header { margin-bottom: 6px; text-align: center; }
-        .header h1 { margin: 0 0 1px; font-size: 19px; letter-spacing: 0.2px; }
-        .headline { margin: 0 0 2px; color: var(--accent); font-weight: 600; font-size: 11px; }
+        /* Compact header, mirroring PdfResumeRenderer: name at ~1.5x body, headline a step
+           under body, contact two steps under — the header should cost a few lines, not a
+           seventh of the page. */
+        .header { margin-bottom: 4px; text-align: center; }
+        .header h1 { margin: 0; font-size: 17px; letter-spacing: 0.2px; line-height: 1.25; }
+        .headline { margin: 0; color: var(--accent); font-weight: 600; font-size: 10.5px; }
         .contact { margin: 0; color: var(--muted); font-size: 9px; }
         .contact a { color: var(--muted); text-decoration: none; }
         .contact a:hover { text-decoration: underline; }
@@ -352,11 +359,13 @@ public sealed class HtmlResumeRenderer
           padding-bottom: 1px;
           margin: 0 0 3px;
         }
+        /* Justified, matching PdfResumeRenderer.ComposeJustified: a full last line instead of
+           a ragged right edge, at the cost of nothing but word spacing. */
+        .summary, .bullets li { text-align: justify; }
         .summary { margin: 0; color: var(--ink); }
         .skills { margin: 0; }
-        .skill-row { display: flex; gap: 8px; padding: 0.5px 0; }
-        .skill-row dt { flex: 0 0 150px; font-weight: 600; color: var(--ink); }
-        .skill-row dd { margin: 0; color: var(--ink); }
+        .skill-row { margin: 0.5px 0; color: var(--ink); }
+        .skill-label { font-weight: 600; }
         .entry { margin-bottom: 3px; page-break-inside: avoid; }
         .entry:last-child { margin-bottom: 0; }
         .entry-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
@@ -367,13 +376,22 @@ public sealed class HtmlResumeRenderer
         .location, .tagline, .links { margin: 0.5px 0 1px; color: var(--muted); font-size: 9px; }
         .links a { color: var(--muted); }
         .bullets { margin: 1px 0 0; padding-left: 16px; }
-        .bullets li { margin: 0.5px 0; }
+        /* Chromium and Firefox minimize excessively short last lines with this; it is the one
+           lever the HTML path has that the PDF path does not, and it costs nothing when
+           unsupported. It is a refinement on top of writing bullets to length, not a
+           replacement for it — see BulletLineFit. */
+        .bullets li { margin: 0.5px 0; text-wrap: pretty; }
         .certs { margin: 0; padding-left: 16px; }
         .certs li { margin: 1px 0; }
         @media print {
-          @page { size: Letter; margin: 0.25in; }
-          body { font-size: 9px; line-height: 1.05; }
+          /* Matches PdfResumeRenderer's geometry: 0.5in margins, 10pt body — the dense
+             reference layout this renderer follows. */
+          @page { size: Letter; margin: 0.5in; }
+          body { font-size: 10pt; line-height: 1.15; }
           .resume { max-width: none; padding: 0; margin: 0; }
+          .header h1 { font-size: 15pt; }
+          .headline { font-size: 9.5pt; }
+          .contact { font-size: 8pt; }
           a { color: inherit; }
         }
         """;

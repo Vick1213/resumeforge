@@ -188,6 +188,33 @@ public sealed class MarkdownKnowledgeBaseReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task Rejoins_a_word_a_hard_wrap_split_across_a_hyphen()
+    {
+        WriteFile("experience/acme-corp.md",
+            "---",
+            "type: experience",
+            "role: Engineer",
+            "organization: Acme",
+            "startDate: 2020-01",
+            "endDate: 2021-01",
+            "---",
+            "",
+            "- Built AutoML workflows and chatbot integrations, cutting model-",
+            "  delivery timelines.",
+            "- Improved reliability -",
+            "  and scalability.");
+
+        var snapshot = await CreateReader().ReadAsync(CancellationToken.None);
+
+        var item = snapshot.Items.ShouldHaveSingleItem();
+        item.Bullets[0].Text.ShouldBe("Built AutoML workflows and chatbot integrations, cutting model-delivery timelines.");
+
+        // A hyphen the author actually typed as a dash still takes its space: only a hyphen
+        // attached to a word on both sides is treated as a split word.
+        item.Bullets[1].Text.ShouldBe("Improved reliability - and scalability.");
+    }
+
+    [Fact]
     public async Task Folds_hard_wrapped_continuation_lines_into_education_highlights()
     {
         WriteFile("education/uw.md",

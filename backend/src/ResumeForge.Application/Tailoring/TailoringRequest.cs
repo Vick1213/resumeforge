@@ -27,6 +27,14 @@ public sealed record TailoringRequest
     public int? MaxPages { get; init; } = 2;
 
     /// <summary>
+    /// A custom headline for this run (CONTRACTS.md §2 "Tailored headline"). When non-blank
+    /// it replaces the job-title-derived headline verbatim (trimmed, whitespace collapsed);
+    /// null or blank keeps the default behaviour — the posting's title, or the profile
+    /// headline when the posting has none.
+    /// </summary>
+    public string? Headline { get; init; }
+
+    /// <summary>
     /// Entry ids (<c>exp:</c>, <c>prj:</c>, <c>edu:</c>, <c>cert:</c>) forced into the
     /// tailored resume regardless of the model's commands or the page-budget trimmer
     /// (CONTRACTS.md §6 "Forced inclusion"). Null or empty means no forcing.

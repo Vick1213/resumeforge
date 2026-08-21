@@ -17,7 +17,24 @@ namespace ResumeForge.Application.Tailoring;
 public interface IBriefBuilder
 {
     /// <summary>Builds the brief for one tailoring run.</summary>
-    string Build(JobPosting posting, JobAnalysis analysis, CandidateSet candidates, ResumeDocument baseResume, TailorOptions options);
+    /// <param name="posting">The job posting being tailored against.</param>
+    /// <param name="analysis">The deterministic analysis of <paramref name="posting"/>.</param>
+    /// <param name="candidates">The scored candidate pool the model chooses from.</param>
+    /// <param name="baseResume">The untailored resume the run starts from.</param>
+    /// <param name="options">The resolved options for this run.</param>
+    /// <param name="atsReview">
+    /// The <c>ats-review</c> pass's verdict, or null when it did not run (below
+    /// <see cref="ModelEffort.Standard"/>) or failed. When present its gaps are carried into
+    /// the brief as the run's stated objective, so the command pass is answering a specific
+    /// screener's specific complaints rather than re-deriving them from the posting.
+    /// </param>
+    string Build(
+        JobPosting posting,
+        JobAnalysis analysis,
+        CandidateSet candidates,
+        ResumeDocument baseResume,
+        TailorOptions options,
+        AtsReview? atsReview = null);
 
     /// <summary>
     /// Estimates the token count of <paramref name="text"/> using a simple

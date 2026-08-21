@@ -1,5 +1,6 @@
 import type {
   ApplicationDto,
+  AtsReview,
   AutofillProfile,
   CoverageReport,
   GitHubRepoPreview,
@@ -555,6 +556,33 @@ export const fixtureCoverage: CoverageReport = {
   ],
 };
 
+const fixtureAtsReview: AtsReview = {
+  scoreBefore: 61,
+  scoreAfter: 84,
+  verdict:
+    "Strong distributed-systems evidence, but two of the posting's core terms never appear outside the skills list.",
+  gaps: [
+    {
+      keyword: 'Kubernetes',
+      importance: 'critical',
+      skillsOnly: true,
+      placement: 'exp:nimbus#1',
+      angle:
+        'The .NET 6 to .NET 8 migration across 40+ services ran on Kubernetes — name it in that bullet, alongside the 12,000 lines of shim code already there.',
+    },
+    {
+      keyword: 'Terraform',
+      importance: 'important',
+      skillsOnly: false,
+      placement: null,
+      angle: 'Nothing in the resume evidences infrastructure-as-code; leave this gap open rather than claiming it.',
+    },
+  ],
+  recruiterNotes: [
+    'Kubernetes appears only in the skills list. A parser accepts that; a recruiter reads it as a claim with nothing behind it.',
+  ],
+};
+
 export const fixtureTailoringResult: TailoringResult = {
   document: {
     ...fixtureBaseResume,
@@ -565,7 +593,8 @@ export const fixtureTailoringResult: TailoringResult = {
   diff: fixtureDiff,
   commands: { accepted: fixtureCommands, rejected: fixtureRejectedCommands },
   coverage: fixtureCoverage,
-  usage: { inputTokens: 812, outputTokens: 244, modelCalls: 1, cacheHits: 0 },
+  atsReview: fixtureAtsReview,
+  usage: { inputTokens: 2140, outputTokens: 512, modelCalls: 2, cacheHits: 0 },
   trace: fixtureGraphTrace,
 };
 

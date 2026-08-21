@@ -162,11 +162,11 @@ public sealed record Skill
 ### Tailored headline
 
 A tailoring run's `Basics.Headline` is a deterministic override — never a model decision.
-When the job's title (`JobPosting.Title`, §4) was determined at ingest, the tailored
-document's headline becomes that title, trimmed and with internal whitespace runs
-collapsed to single spaces; it is otherwise used verbatim, never rewritten. When `Title`
-is null or blank, `Basics.Headline` keeps the profile headline `build-base` copied from
-the knowledge base.
+Precedence: a non-blank `TailorRequest.Headline` (the user's own title for this run) wins
+outright; otherwise the job's title (`JobPosting.Title`, §4) determined at ingest is used.
+Either way the text is trimmed and internal whitespace runs are collapsed to single
+spaces; it is otherwise used verbatim, never rewritten. When both are null or blank,
+`Basics.Headline` keeps the profile headline `build-base` copied from the knowledge base.
 
 ---
 
@@ -504,11 +504,37 @@ the name, in that order. Every hyperlink's *display* text is scheme-stripped and
 shows as `example.com`); the link *target* is always the full, untouched URL. Only
 clickability changes — font size and color are identical to the surrounding plain text.
 
-`ResumeBuilder`'s default `SectionOrder` is `Summary, Education, Skills, Experience,
-Projects, Certifications` — education sits right after the summary rather than at the end,
-so a candidate's degree isn't buried below every job and side project. This is only the
-default: `SetSectionOrderCommand` still reorders freely, and every renderer follows
-whatever `SectionOrder` the document carries, not this list.
+Three further rules exist to keep the page dense enough to be worth its length. All three
+are presentation-only: the document model is untouched, and `MarkdownResumeRenderer` — the
+plain-text, ATS-facing form, where a line costs nothing — applies none of them.
+
+- **A project's `Tagline` renders only when the project has no bullets.** A tagline
+  restates, in a full-width sentence, what the bullets under it are about to evidence in
+  detail; on a projects-heavy resume that is the single largest block of low-value space on
+  the page. Where a project has no bullets the tagline is the only thing it can say, so it
+  still renders — and `HasRenderableContent` keeps an entry with neither off the page.
+- **A skill group's label leads its own line** (`Languages: C#, Go, …`) rather than sitting
+  in a fixed left column. A column wide enough for the longest label reserves that width on
+  every row and wraps the skills into what is left, which is how a five-group block came to
+  occupy a third of the page.
+- **An education entry's `Highlights` join its metadata line**, after location and GPA and
+  separated by `·`, rather than each becoming a bullet. A line of coursework should not
+  carry a bullet's visual weight, or a bullet's vertical cost.
+
+`ResumeBuilder`'s default `SectionOrder` is `Summary, Skills, Experience, Projects,
+Education, Certifications`, and `SectionOrderPolicy` then has the final say on where
+education sits. When some included education entry is still in progress or ended within
+`SectionOrderPolicy.EarlyCareerMonths` (18) of now, education is hoisted to the front of the
+body — directly after the summary if there is one, first otherwise — and every other section
+keeps its relative position. Past that window the default stands and the degree sits below
+the work history.
+
+The policy is applied twice: once by `ResumeBuilder` to the order it builds, and once by
+`CommandExecutor` to whatever order it is about to emit, so a `SetSectionOrderCommand` cannot
+route around it. The model reorders every *other* section freely; education's placement
+follows from the candidate's career stage rather than from anything in the posting, and left
+to itself the model proposed education-last on early-career resumes run after run. Every
+renderer still follows whatever `SectionOrder` the document carries, not this list.
 
 Skill groups follow one more rule at build time, in `ResumeBuilder.BuildSkillGroups`: a
 taxonomy category left with **exactly one** skill after normalization is folded into the
@@ -516,6 +542,50 @@ trailing "Other" group instead of rendering as its own single-item row (a full l
 for one skill — "Practices: CI/CD" — reads as broken, not concise). "Other" itself is exempt
 from folding, since it is the fold's destination. Categories with two or more skills are
 unaffected.
+
+### Page geometry and type (PDF and HTML print)
+
+The PDF renderer and the HTML renderer's `@media print` block share one geometry: **US
+Letter, 0.5in margins on all four sides, 10pt body, 1.15 line height, black text,
+ragged-right**. The margin is a floor every source that publishes one agrees on —
+r/EngineeringResumes ("minimum 0.4 inches"), CMU SCS ("no smaller than 0.5″"), Harvard,
+Berkeley, and MIT. The body sits at the bottom of the 10–12pt range the same guides allow,
+deliberately: the reference resumes this layout follows are dense single-page documents
+that spend the space saved on more bullets per entry, and the page should be full of
+content, not of type.
+
+Every glyph is black. Grey secondary text and a coloured accent read well on screen and
+cost the document on paper and in a greyscale scan; hierarchy is carried by weight, size,
+and position instead. The horizontal rule under a section heading is the one non-black
+element, and it is not text.
+
+`PdfResumeRenderer`'s fit search never zooms: the scale is fixed at **1.0×**. Magnifying
+a thin resume to fill its page produced documents that read as "empty but zoomed in" —
+large type carrying little content — which is the opposite of the dense layout this
+geometry exists for. Filling a short last page is left to the spacing search alone, which
+widens the gaps between top-level items without moving a single line break, and is capped
+at **2.0×** so leftover space past that stays honestly empty instead of being stretched
+into padding. A page that stops well short of its foot signals missing content, and the
+fix belongs upstream in what gets included, never in the type size.
+
+Page-break behaviour follows from the same sources: an individual bullet never splits
+across pages (`PreventPageBreak`), and a section heading or an entry title never starts a
+page it cannot put roughly two lines of content under (`EnsureSpace`), so no heading is
+left stranded at the foot of a page.
+
+The header contact block renders as **one centered row when the joined display text fits
+the line, and two rows otherwise** — identity fields (email, phone, location) on the first,
+links (website, LinkedIn, GitHub) on the second. The check is on length, not field count:
+length is what actually decides whether a line wraps, and the old "four fields or fewer"
+rule split a header of six short ones that a single line holds comfortably. A wrap chosen
+by the layout engine lands mid-URL; splitting at a known boundary makes a two-row header
+read as a decision rather than as a defect.
+
+Body copy — the summary and every bullet — is **justified** rather than ragged-right in
+both the PDF and the HTML. Word spacing is the only thing that stretches: no line breaks
+move, so `BulletLineFit`'s character estimate stays exactly as calibrated, and a bullet
+written near the top of its band keeps its last line full instead of stranding two words
+on it.
 
 In the PDF and HTML renderers, the header — name, headline, and contact line — is
 horizontally centered rather than left-aligned; Markdown has no alignment concept and is
@@ -526,18 +596,32 @@ ATS parser extracting text from an unmodified PDF sees "So�ware" instead. Disa
 ligatures trades a minor typographic nicety for text that copy-pastes and parses correctly,
 which matters more on a document whose main job is to survive automated screening.
 
+Dates are formatted by `DateRangeFormatter` as `MMM yyyy – MMM yyyy` (en dash, spaces
+around it) or `MMM yyyy – Present`, using the resume convention's month abbreviations
+rather than `"MMM"`'s: **June**, **July**, and **Sept** are written out rather than clipped
+to three letters, and none takes a trailing period. That also happens to be the safer form
+for a parser matching months on a four-character prefix, which recognizes `June`/`July`/
+`Sept` and misses `Jun`/`Jul`/`Sep`.
+
 ### Command validation (`ICommandValidator`) — runs before execution
 
 A command is **rejected**, not clamped, if it fails any of these. Rejections are
 reported, never silently dropped:
 
 1. Every `Target` / `Parent` / `Order` entry parses as an `EntityId` and resolves to an
-   existing node in the document.
+   existing node in the document. An `ExcludeCommand` additionally may not target a whole
+   experience entry, rejected with code `experience-protected`: the model may trim a weak
+   bullet, never a job — employment history leaves the page only when the user removes it
+   via `ExcludedEntryIds` ("Forced inclusion").
 2. `SelectVariantCommand.VariantIndex` is within the target bullet's `Variants` range.
-3. `RewriteCommand.Text` is ≤ 300 characters, is a single line, and shares at least one
-   number or proper noun with the original bullet when the original contained one —
-   this is the **anti-fabrication check**: the model may re-angle a bullet but may not
-   invent metrics. Implemented as `IFabricationGuard`.
+3. `RewriteCommand.Text` is ≤ 300 characters, is a single line, and passes the
+   **anti-fabrication check** — implemented as `IFabricationGuard`, which runs in both
+   directions. The rewrite may introduce no number the original did not have (the model may
+   re-angle a bullet but may not invent metrics), and it must keep at least one of the
+   numbers the original *did* have. A bullet that had no numbers must instead keep one of
+   its proper nouns. Losing the metric is its own failure rather than something a surviving
+   proper noun excuses: a rewrite that keeps "AWS" while dropping "$2K/month" has traded the
+   claim for the tech stack, and the number was the reason the bullet earned its line.
 4. Total `RewriteCommand` count ≤ `TailorOptions.MaxRewrites`, which is derived from
    effort — see below.
 5. `OrderCommand.Order` contains no duplicates.
@@ -548,6 +632,25 @@ reported, never silently dropped:
    optimization from lying on a resume, and it is not negotiable at any effort level.
    The command is additionally rejected with `op-unavailable-at-effort` when the run's
    effort is below `Thorough`.
+7. Replacement text — a `RewriteCommand`'s or an `InjectKeywordsCommand`'s — is not
+   **ragged**: it either fits on one rendered line or fills its last line to at least
+   `BulletLineFit.MinLastLineFill` (55%) of the column width, rejected with code
+   `ragged-line-fill` otherwise. `BulletLineFit` (in `ResumeForge.Domain.Formatting`)
+   estimates the wrap against `CharsPerLine` — 108, measured by reading the wrap points back
+   out of a rendered PDF's text layer at the renderer's fixed 1.0× scale and 10pt body,
+   from a realistic mixed-case bullet (the widest text a resume carries). The bullet is set flush left in a fixed column, so nothing but the wording can
+   move the break; a bullet that spills three words onto a line of their own costs the
+   vertical space of a full line and reads as unedited. The same bands are stated to the
+   model in the system prompt, derived from `BulletLineFit` rather than written out so the
+   instruction and the rejection cannot drift apart. Rejection is safe by construction: the
+   bullet the rewrite would have replaced simply stays as authored.
+8. `SetSummaryCommand.Text` states no figure the document does not already evidence,
+   rejected with code `fabricated-metric` otherwise. The summary is the only block the
+   model writes as free prose rather than as an edit to existing text, which left it the
+   only text in the system rule 3's guard never saw — and it is the first thing a human
+   reads. It is checked against the **whole document**, not against the previous summary,
+   because a tailored summary legitimately lifts a figure out of a bullet; what it may not
+   do is introduce one.
 
 ```csharp
 public sealed record CommandValidationResult
@@ -583,6 +686,9 @@ public enum ModelEffort { Minimal, Standard, Thorough, Maximum }
 | `Maximum` | 20 | + `setSummary` regenerated per run | ~2,000 |
 | `Full` | 200 | + `setTagline` (project descriptions) | ~5,000–10,000 |
 
+Every tier except `Minimal` additionally spends one model call on the `ats-review` pass
+described below; its output tokens are on top of the figures above.
+
 `Standard` is the default and is what every existing behaviour maps to, so effort is
 purely additive — an omitted `Effort` must produce byte-identical output to before this
 was introduced.
@@ -605,6 +711,85 @@ Two rules that hold at **every** level, including `Maximum` and `Full`:
 `MaxRewrites` remains individually overridable on the request. When both are supplied the
 explicit value wins, so effort is a preset rather than a lock.
 
+### ATS review pass — the run's first model call
+
+Tailoring is a **two-pass** process, and the passes have deliberately different jobs. The
+first (`ats-review`) reads and reports; the second (`propose-commands`) decides and acts.
+Splitting them is what lets each one be asked a single question it can answer well: "what is
+missing?" is a reading problem, and "what commands close it?" is a writing problem, and a
+model asked both at once reliably shortchanges the first.
+
+`ats-review` is given the posting and the base resume as markdown — with the user's forced
+pins and excludes ("Forced inclusion") already applied, so it reviews the resume the user
+is actually sending: an entry the user deselected is not on the page, and a review that
+kept flagging it would read as the tool ignoring the user. It returns:
+
+```csharp
+public sealed record AtsReview
+{
+    public required int ScoreBefore { get; init; }      // 0-100, the resume as it stands
+    public required int ScoreAfter { get; init; }       // 0-100, every gap below closed
+    public required string Verdict { get; init; }
+    public required IReadOnlyList<AtsGap> Gaps { get; init; }
+    public required IReadOnlyList<string> RecruiterNotes { get; init; }
+}
+
+public sealed record AtsGap
+{
+    public required string Keyword { get; init; }       // spelled as the posting spells it
+    public required AtsGapImportance Importance { get; init; }
+    public required bool SkillsOnly { get; init; }
+    public string? Placement { get; init; }             // an entry/bullet id, or a section name
+    public required string Angle { get; init; }         // the claim it should evidence
+}
+
+public enum AtsGapImportance { Critical, Important, NiceToHave }
+```
+
+Its findings are carried into the brief as `ATS-SCORE`, `ATS-VERDICT`, `ATS-GAPS` (one line
+per gap: `keyword|importance|skills-only|placement|angle`), and `ATS-RECRUITER-NOTES`, and
+the command pass's system prompt instructs it to work through them from `critical` down.
+
+**Two gates, and they fail a resume for different reasons.** This distinction is the whole
+reason the pass exists, and it is stated in both prompts:
+
+- **The ATS** matches the posting's vocabulary against the document's. A term the posting
+  leans on and the resume never says costs the candidate the screen regardless of whether
+  they can do the work. A keyword problem, solvable anywhere on the page.
+- **The recruiter or hiring manager** reads for evidence. A keyword parked in the skills
+  list satisfies the parser and tells a human nothing — no scale, no outcome, no account of
+  where it was actually used. It clears this gate only inside a bullet, attached to what was
+  built and what it moved.
+
+Hence `AtsGap.SkillsOnly`, which marks a term the resume already lists and no bullet
+evidences. It is the highest-value gap in the report, because the material to close it
+usually already exists — and the one gap that adding to the skills list cannot fix. Hence
+also `Angle`, which names the claim the keyword should be evidencing rather than just the
+keyword: it is what the command pass turns into bullet text.
+
+Three properties hold:
+
+- **The fabrication guard is not relaxed for it.** The review is read by a pass that can
+  rewrite bullets, so an invented angle becomes an invented claim. The prompt requires every
+  angle to be built from work the resume already describes, and to say "no evidence here"
+  rather than manufacture support. `Angle` is advisory input, never an authorization —
+  `ICommandValidator` still rejects any rewrite that fails the guard.
+- **It never fails a run.** The node is not `Critical`, and it catches its own exceptions and
+  returns null rather than throwing (a failed node's transitive dependents are `Skipped`,
+  which here would be the entire rest of the pipeline). With no review, the brief simply
+  omits those sections and the run behaves exactly as it did before the pass existed.
+- **It runs at `Standard` effort and above.** `Minimal` skips it, because `MaxRewrites` is 0
+  there: a report whose output is "work these terms into these bullets" would be handing the
+  command pass a list of things it is forbidden to do.
+
+The review is the one place the product is given the resume in full. The token asymmetry
+`IBriefBuilder` exists to maintain does not apply, because this pass's question is what the
+document as a whole fails to *say*, which cannot be answered from a list of ids and truncated
+previews.
+
+`TailoringResult.AtsReview` carries it to the client, where the React app renders both scores
+and every gap.
+
 ### Page budget
 
 A resume that does not fit on a page nobody will read is not tailored. Relevance ranking
@@ -622,17 +807,19 @@ executed and before the final render:
 
 Two rules constrain what may be cut:
 
-- **Cut order follows relevance, but section kind breaks ties**: certifications and
-  projects are surrendered before experience. A job seeker's employment history is the
-  substance of a resume; side projects are the padding.
-- **The floor is never crossed**: basics, and the single highest-scoring experience
-  entry, are never excluded to satisfy a budget. If a document cannot fit even at the
+- **Cut order follows relevance, but section kind breaks ties**: certifications are
+  surrendered before projects. **Experience and education are never cut candidates at
+  all.** A job seeker's employment history is the substance of a resume — a silently
+  dropped job reads as a gap in the candidate's history, which is worse than a resume that
+  runs long. Only the user, via `ExcludedEntryIds` ("Forced inclusion" above), removes a
+  job from the page.
+- **The floor is never crossed**: basics, every experience entry, and every education
+  entry are never excluded to satisfy a budget. If a document cannot fit even at the
   floor, it is rendered over budget rather than mutilated, and the result says so.
   `TailorRequest.PinnedEntryIds` (see "Forced inclusion" above) extends the floor: every
-  pinned entry, of any cuttable kind, joins the highest-scoring experience entry as never a
-  cut candidate. If the floor plus every pin still doesn't fit, the same rule applies —
-  rendered over budget, `FitsBudget = false` — rather than cutting a pinned entry to make
-  it fit.
+  pinned entry, of any cuttable kind, is never a cut candidate. If the floor plus every
+  pin still doesn't fit, the same rule applies — rendered over budget,
+  `FitsBudget = false` — rather than cutting a pinned entry to make it fit.
 
 Every entry dropped this way is reported as a `ResumeDiffEntry` with `Kind = Excluded`
 and a `Rationale` naming the budget, so a cut is never silent — the user can see exactly
@@ -654,6 +841,7 @@ public sealed record TailoringResult
     public required IReadOnlyList<ResumeDiffEntry> Diff { get; init; }
     public required CommandValidationResult Commands { get; init; }
     public required CoverageReport Coverage { get; init; }
+    public AtsReview? AtsReview { get; init; }    // null when the review pass did not run
     public required TokenUsage Usage { get; init; }
     public required IReadOnlyList<GraphNodeTrace> Trace { get; init; }
 }
@@ -758,10 +946,14 @@ The tailoring graph (declared in `TailoringGraphFactory`):
 
 ```
         fetch-jd ──► analyze-jd ──┬──► score-experience ─┐
-                                  ├──► score-projects ───┼──► build-brief ──► propose-commands
-        load-kb ──► build-base ───┴──► score-skills ─────┘         (model)         (model)
+                │                 ├──► score-projects ───┼──► build-brief ──► propose-commands
+        load-kb ─┼► build-base ───┴──► score-skills ─────┤         (model)         (model)
+                 └──────────────────► ats-review ────────┘
               │                                                                        │
               └────────────────────────────────────────────────► validate-commands ◄───┘
+                                                                         │
+                                                                 repair-commands
+                                                                   (model, at most once)
                                                                          │
                                                     ┌────────────────────┼───────────────┐
                                                     ▼                    ▼               ▼
@@ -771,9 +963,26 @@ The tailoring graph (declared in `TailoringGraphFactory`):
                                                                       render
 ```
 
-`score-experience`, `score-projects`, `score-skills` run concurrently. The two verifier
-nodes run concurrently with each other. `propose-commands` is the only node that spends
-generation tokens; `verify-*` nodes are deterministic C#.
+`score-experience`, `score-projects`, `score-skills` run concurrently, and `ats-review` runs
+concurrently with all three — it depends only on `fetch-jd` and `build-base`, so the run's
+first model call overlaps the deterministic scoring rather than following it. The two
+verifier nodes run concurrently with each other. `ats-review`, `propose-commands`, and
+`repair-commands` are the only nodes that spend generation tokens; `verify-*` nodes are
+deterministic C#.
+
+`repair-commands` is the bounded second chance for the first round's fixable rejections.
+When `validate-commands` rejected a command for a reason the model can satisfy on another
+attempt — `ragged-line-fill`, `rewrite-too-long`, `rewrite-multiline`,
+`fabricated-metric` — the node sends one repair brief (the rejected text, the rule it
+broke, and the text currently on the page) and validates what comes back under the same
+rules, with the rewrite budget reduced by what the first round already spent. Structural
+rejections (`unknown-target`, `op-unavailable-at-effort`, `experience-protected`,
+`unsupported-keyword`, `malformed-command`) are never retried. The node is advisory in the
+same way `ats-review` is: any failure returns the first round's validation unchanged, and
+when there is nothing to repair it is a free pass-through that spends no tokens. Without
+this node, every improvement the model proposed and the validator refused silently
+vanished — the user watched the run describe a better bullet and then received a resume
+without it.
 
 ---
 
@@ -933,6 +1142,7 @@ public sealed record TailorRequest
     public int? MaxRewrites { get; init; }         // null → derived from Effort; set wins
     public int? MaxPages { get; init; } = 2;       // null → unbounded; see Page budget
     public bool DryRun { get; init; }              // validate + trace, don't persist
+    public string? Headline { get; init; }         // custom title; non-blank wins over the job title (§2)
     public IReadOnlyList<string>? PinnedEntryIds { get; init; }    // forced in; see Forced inclusion
     public IReadOnlyList<string>? ExcludedEntryIds { get; init; }  // forced out; see Forced inclusion
 }

@@ -234,8 +234,40 @@ public sealed class ResumeBuilderTests
 
         doc.SectionOrder.ShouldBe(
         [
+            SectionKind.Summary, SectionKind.Skills, SectionKind.Experience,
+            SectionKind.Projects, SectionKind.Education, SectionKind.Certifications,
+        ]);
+    }
+
+    [Fact]
+    public void Education_leads_the_body_for_a_recent_graduate()
+    {
+        var edu = TestData.KnowledgeItem(
+            KnowledgeItemType.Education, "asu", "B.S. Computer Science", "Arizona State University",
+            new DateOnly(2022, 8, 1), new DateOnly(2025, 12, 1));
+
+        var doc = NewBuilder().Build(Snapshot([edu]));
+
+        doc.SectionOrder.ShouldBe(
+        [
             SectionKind.Summary, SectionKind.Education, SectionKind.Skills,
             SectionKind.Experience, SectionKind.Projects, SectionKind.Certifications,
+        ]);
+    }
+
+    [Fact]
+    public void Education_stays_below_the_work_history_once_the_degree_is_old()
+    {
+        var edu = TestData.KnowledgeItem(
+            KnowledgeItemType.Education, "asu", "B.S. Computer Science", "Arizona State University",
+            new DateOnly(2014, 8, 1), new DateOnly(2018, 6, 1));
+
+        var doc = NewBuilder().Build(Snapshot([edu]));
+
+        doc.SectionOrder.ShouldBe(
+        [
+            SectionKind.Summary, SectionKind.Skills, SectionKind.Experience,
+            SectionKind.Projects, SectionKind.Education, SectionKind.Certifications,
         ]);
     }
 

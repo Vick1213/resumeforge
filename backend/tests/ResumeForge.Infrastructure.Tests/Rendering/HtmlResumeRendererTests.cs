@@ -134,7 +134,7 @@ public sealed class HtmlResumeRendererTests
     {
         var html = _renderer.Render(RenderingTestData.Document());
 
-        html.ShouldContain(".header { margin-bottom: 6px; text-align: center; }");
+        html.ShouldContain(".header { margin-bottom: 4px; text-align: center; }");
     }
 
     [Fact]
@@ -152,5 +152,47 @@ public sealed class HtmlResumeRendererTests
 
         summaryIdx.ShouldBeLessThan(educationIdx);
         educationIdx.ShouldBeLessThan(skillsIdx);
+    }
+
+    [Fact]
+    public void A_skill_group_label_leads_its_own_line_rather_than_sitting_in_a_fixed_column()
+    {
+        // The old two-column layout reserved the width of the longest label on every row and
+        // wrapped the skills into what was left, which is how a five-group block came to eat
+        // a third of the page.
+        var html = new HtmlResumeRenderer().Render(RenderingTestData.Document());
+
+        html.ShouldContain("<span class=\"skill-label\">Languages:</span>");
+        html.ShouldNotContain("<dt>");
+    }
+
+    [Fact]
+    public void A_tagline_on_a_project_that_already_has_bullets_is_not_rendered()
+    {
+        var withBullets = TestData.Project(
+            "prj:app", "Ledgerline",
+            bullets: [TestData.Bullet("prj:app#0", "Cut cold-start time from 900ms to 120ms.")],
+            tagline: "A double-entry ledger for small businesses.");
+
+        var html = new HtmlResumeRenderer().Render(RenderingTestData.Document() with { Projects = [withBullets] });
+
+        html.ShouldContain("Ledgerline");
+        html.ShouldNotContain("A double-entry ledger for small businesses.");
+    }
+
+    [Fact]
+    public void Education_highlights_join_the_metadata_line_instead_of_becoming_bullets()
+    {
+        var entry = TestData.Education(
+            "edu:uw", "University of Washington", "B.S. Computer Science",
+            new DateOnly(2014, 9, 1), new DateOnly(2018, 6, 1),
+            highlights: ["Coursework: Distributed Systems"]);
+
+        var html = new HtmlResumeRenderer().Render(
+            RenderingTestData.Document() with { Education = [entry] });
+
+        html.ShouldContain("<p class=\"location\">");
+        html.ShouldContain("Coursework: Distributed Systems");
+        html.ShouldNotContain("<li>Coursework: Distributed Systems</li>");
     }
 }

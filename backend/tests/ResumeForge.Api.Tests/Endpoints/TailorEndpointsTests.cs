@@ -49,6 +49,46 @@ public sealed class TailorEndpointsTests(ResumeForgeApiFactory factory)
     }
 
     [Fact]
+    public async Task A_run_reports_the_ats_review_and_the_score_closing_its_gaps_would_reach()
+    {
+        // End to end on the offline heuristic provider, which the factory pins: the
+        // ats-review node runs, its findings reach build-brief, and the result carries them
+        // out to the client (CONTRACTS.md §6 "ATS review pass").
+        using var client = factory.CreateClient();
+        var jobId = await CreateJobAsync(client);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor",
+            new TailorRequest { JobId = jobId, Effort = ModelEffort.Standard, DryRun = true },
+            TestJson.Options);
+
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+
+        result!.AtsReview.ShouldNotBeNull();
+        result.AtsReview.ScoreAfter.ShouldBeGreaterThanOrEqualTo(result.AtsReview.ScoreBefore);
+        result.AtsReview.Verdict.ShouldNotBeNullOrWhiteSpace();
+        result.Trace.ShouldContain(t => t.Node == "ats-review" && t.Status == GraphNodeStatus.Succeeded);
+    }
+
+    [Fact]
+    public async Task Minimal_effort_skips_the_ats_review_because_it_cannot_act_on_it()
+    {
+        // MaxRewrites is 0 at Minimal, so a report whose whole output is "work these terms
+        // into these bullets" would name work the command pass is forbidden to do.
+        using var client = factory.CreateClient();
+        var jobId = await CreateJobAsync(client);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor",
+            new TailorRequest { JobId = jobId, Effort = ModelEffort.Minimal, DryRun = true },
+            TestJson.Options);
+
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+
+        result!.AtsReview.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task Non_dry_run_persists_a_new_resume_and_a_readable_trace()
     {
         using var client = factory.CreateClient();
@@ -233,6 +273,44 @@ public sealed class TailorEndpointsTests(ResumeForgeApiFactory factory)
         result.ShouldNotBeNull();
 
         result.Document.Basics.Headline.ShouldBe("Senior Backend Engineer");
+    }
+
+    [Fact]
+    public async Task A_custom_headline_on_the_request_wins_over_the_job_title()
+    {
+        using var client = factory.CreateClient();
+
+        var jobId = await CreateJobAsync(client);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor",
+            new TailorRequest { JobId = jobId, Headline = "  Embedded   Systems Engineer ", DryRun = true },
+            TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+        result.ShouldNotBeNull();
+
+        // Trimmed and whitespace-collapsed, exactly as the job-title path normalizes.
+        result.Document.Basics.Headline.ShouldBe("Embedded Systems Engineer");
+    }
+
+    [Fact]
+    public async Task A_blank_custom_headline_falls_back_to_the_job_title_default()
+    {
+        using var client = factory.CreateClient();
+
+        var jobId = await CreateJobAsync(client);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/tailor", new TailorRequest { JobId = jobId, Headline = "   ", DryRun = true }, TestJson.Options);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<TailoringResult>(TestJson.Options);
+        result.ShouldNotBeNull();
+
+        result.Document.Basics.Headline.ShouldNotBeNullOrWhiteSpace();
+        result.Document.Basics.Headline.ShouldNotContain("Embedded");
     }
 
     [Fact]
@@ -434,6 +512,10 @@ public sealed class TailorEndpointsTests(ResumeForgeApiFactory factory)
             onePageResult.FitsBudget.ShouldBeTrue();
 
             IncludedEntryCount(onePageResult.Document).ShouldBeLessThan(IncludedEntryCount(twoPageResult.Document));
+
+            // Employment history is never surrendered to a page budget: every experience
+            // entry survives even the tightest budget.
+            onePageResult.Document.Experience.ShouldAllBe(e => e.Included);
         }
         finally
         {
@@ -450,12 +532,14 @@ public sealed class TailorEndpointsTests(ResumeForgeApiFactory factory)
         document.Certifications.Count(c => c.Included);
 
     /// <summary>
-    /// Writes a batch of low-relevance filler experience/project knowledge items — enough
-    /// that the rendered resume overflows the default two-page budget on its own — and
-    /// returns their ids so the caller can delete them again once done. Every entry's
-    /// <c>tech:</c> is deliberately unrelated to <see cref="SamplePosting"/>'s C#/.NET/
-    /// PostgreSQL/Kubernetes requirements, so each one scores at or near zero relevance and
-    /// is a preferred cut candidate ahead of the fixture's own real experience/project entries.
+    /// Writes a batch of low-relevance filler project knowledge items — enough that the
+    /// rendered resume overflows the default two-page budget on its own — and returns
+    /// their ids so the caller can delete them again once done. Projects only: experience
+    /// entries are never cut by the page-budget enforcer, so filler that overflowed the
+    /// page via experience would make a one-page budget unmeetable by design. Every
+    /// entry's <c>tech:</c> is deliberately unrelated to <see cref="SamplePosting"/>'s
+    /// C#/.NET/PostgreSQL/Kubernetes requirements, so each one scores at or near zero
+    /// relevance and is a preferred cut candidate ahead of the fixture's own real entries.
     /// </summary>
     private static async Task<List<string>> AddLargeFillerKnowledgeBaseAsync(HttpClient client)
     {
@@ -463,21 +547,24 @@ public sealed class TailorEndpointsTests(ResumeForgeApiFactory factory)
 
         for (var i = 0; i < 16; i++)
         {
-            var id = $"exp:scratch-page-budget-{i:D2}";
+            var id = $"prj:scratch-filler-{i:D2}";
             var markdown = $"""
                 ---
-                type: experience
-                role: Filler Role {i}
-                organization: Filler Org {i}
-                location: Remote
+                type: project
+                name: Filler Side Project {i}
+                tagline: An unrelated filler project
                 startDate: {2003 + i}-01
                 endDate: {2004 + i}-01
                 tech: [Ruby, MongoDB]
                 tags: [filler]
                 ---
 
-                - Did unrelated filler work item one for role {i}, padding the rendered length of this entry so the resume overflows the default page budget in this test.
-                - Did unrelated filler work item two for role {i}, padding the rendered length of this entry so the resume overflows the default page budget in this test.
+                - Did unrelated filler work item one for project {i}, padding the rendered length of this entry so the resume overflows the default page budget in this test.
+                - Did unrelated filler work item two for project {i}, padding the rendered length of this entry so the resume overflows the default page budget in this test.
+                - Did unrelated filler work item three for project {i}, padding the rendered length of this entry so the resume overflows the default page budget in this test.
+                - Did unrelated filler work item four for project {i}, padding the rendered length of this entry so the resume overflows the default page budget in this test.
+                - Did unrelated filler work item five for project {i}, padding the rendered length of this entry so the resume overflows the default page budget in this test.
+                - Did unrelated filler work item six for project {i}, padding the rendered length of this entry so the resume overflows the default page budget in this test.
                 """;
 
             using var response = await client.PutAsJsonAsync(

@@ -40,13 +40,16 @@ export const TAILORING_GRAPH_DEPENDENCIES: Record<string, string[]> = {
   'score-experience': ['analyze-jd', 'build-base'],
   'score-projects': ['analyze-jd', 'build-base'],
   'score-skills': ['analyze-jd', 'build-base'],
-  'build-brief': ['score-experience', 'score-projects', 'score-skills'],
+  'ats-review': ['fetch-jd', 'build-base'],
+  'build-brief': ['fetch-jd', 'score-experience', 'score-projects', 'score-skills', 'ats-review'],
   'propose-commands': ['build-brief'],
-  'validate-commands': ['load-kb', 'propose-commands'],
-  'verify-fabrication': ['validate-commands'],
-  'verify-coverage': ['validate-commands'],
-  'execute-commands': ['validate-commands'],
-  render: ['verify-fabrication', 'verify-coverage', 'execute-commands'],
+  'validate-commands': ['build-base', 'propose-commands'],
+  'repair-commands': ['build-base', 'validate-commands'],
+  'verify-fabrication': ['repair-commands'],
+  'verify-coverage': ['repair-commands'],
+  'execute-commands': ['repair-commands'],
+  'enforce-page-budget': ['execute-commands', 'score-experience', 'score-projects', 'score-skills'],
+  render: ['verify-fabrication', 'verify-coverage', 'enforce-page-budget'],
 };
 
 const COLUMN_WIDTH = 220;

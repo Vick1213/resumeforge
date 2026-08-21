@@ -728,7 +728,11 @@ public sealed class CommandExecutor(TimeProvider timeProvider) : ICommandExecuto
             Projects = _projects,
             Education = _education,
             Certifications = _certifications,
-            SectionOrder = _sectionOrder,
+            // The model's section order is advisory; SectionOrderPolicy has the final say on
+            // where education sits, because placement follows from the candidate's own career
+            // stage rather than from anything in the posting. Applied here, at the one point
+            // every executed document passes through, so no command path can route around it.
+            SectionOrder = SectionOrderPolicy.Normalize(_sectionOrder, _education, now),
             CreatedAt = original.CreatedAt,
             UpdatedAt = now,
         };

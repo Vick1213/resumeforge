@@ -27,7 +27,12 @@ public sealed class BriefBuilder : IBriefBuilder
 
     /// <inheritdoc />
     public string Build(
-        JobPosting posting, JobAnalysis analysis, CandidateSet candidates, ResumeDocument baseResume, TailorOptions options)
+        JobPosting posting,
+        JobAnalysis analysis,
+        CandidateSet candidates,
+        ResumeDocument baseResume,
+        TailorOptions options,
+        AtsReview? atsReview = null)
     {
         ArgumentNullException.ThrowIfNull(posting);
         ArgumentNullException.ThrowIfNull(analysis);
@@ -54,6 +59,7 @@ public sealed class BriefBuilder : IBriefBuilder
         }
 
         AppendPosting(sb, posting.RawText, options.PostingExcerptChars);
+        AppendAtsReview(sb, atsReview);
 
         AppendBulletCandidates(sb, "CANDIDATES-EXPERIENCE", candidates.Experience, baseResume, options.CandidateLimit);
         AppendBulletCandidates(sb, "CANDIDATES-PROJECTS", candidates.Projects, baseResume, options.CandidateLimit);
@@ -65,7 +71,13 @@ public sealed class BriefBuilder : IBriefBuilder
         if (options.Effort >= ModelEffort.Full)
         {
             sb.Append("TAGLINES\n");
-            foreach (var project in baseResume.Projects.Where(p => p.Included))
+
+            // A force-excluded project (CONTRACTS.md §6 "Forced inclusion") is dropped here
+            // for the same reason its bullets are dropped from the candidate pool: the user
+            // has already decided it is off the page, and offering its tagline anyway just
+            // invites the model to spend commands — and the user's attention — on it.
+            foreach (var project in baseResume.Projects.Where(p =>
+                         p.Included && !options.ExcludedEntryIds.Contains(p.Id, StringComparer.Ordinal)))
             {
                 sb.Append(project.Id).Append('|')
                   .Append(Truncate(CollapseSpaces(project.Tagline ?? string.Empty), CandidateTextCap)).Append('\n');
@@ -87,6 +99,65 @@ public sealed class BriefBuilder : IBriefBuilder
 
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Appends the <c>ats-review</c> pass's findings: the score it gave the base resume, the
+    /// score it projects once the gaps are closed, and one line per gap
+    /// (<c>keyword|importance|skills-only flag|placement|angle</c>).
+    /// </summary>
+    /// <remarks>
+    /// This is the hand-off that makes tailoring a two-pass process rather than one model
+    /// guessing at both jobs at once. The first pass reads the posting against the resume
+    /// with nothing to do but find what is missing; this section is its answer, and the
+    /// second pass's whole task is to close those gaps using the candidate's real material.
+    /// The <c>S</c> flag on a gap is the important one: it marks a keyword that is already in
+    /// the skills list and therefore already satisfies the parser, so the only useful thing
+    /// left to do with it is put it inside a bullet where a human can see what it was used
+    /// for. Adding it to the skills list again would be work that changes nothing.
+    /// </remarks>
+    private static void AppendAtsReview(StringBuilder sb, AtsReview? review)
+    {
+        if (review is null)
+        {
+            return;
+        }
+
+        sb.Append("ATS-SCORE|").Append(review.ScoreBefore).Append('|').Append(review.ScoreAfter).Append('\n');
+
+        if (!string.IsNullOrWhiteSpace(review.Verdict))
+        {
+            sb.Append("ATS-VERDICT|").Append(Sanitize(review.Verdict)).Append('\n');
+        }
+
+        if (review.Gaps.Count > 0)
+        {
+            sb.Append("ATS-GAPS\n");
+            foreach (var gap in review.Gaps)
+            {
+                sb.Append(Sanitize(gap.Keyword)).Append('|')
+                  .Append(ImportanceToken(gap.Importance)).Append('|')
+                  .Append(gap.SkillsOnly ? 'S' : '-').Append('|')
+                  .Append(Sanitize(gap.Placement)).Append('|')
+                  .Append(Truncate(Sanitize(gap.Angle), RequirementTextCap)).Append('\n');
+            }
+        }
+
+        if (review.RecruiterNotes.Count > 0)
+        {
+            sb.Append("ATS-RECRUITER-NOTES\n");
+            foreach (var note in review.RecruiterNotes)
+            {
+                sb.Append(Truncate(Sanitize(note), RequirementTextCap)).Append('\n');
+            }
+        }
+    }
+
+    private static string ImportanceToken(AtsGapImportance importance) => importance switch
+    {
+        AtsGapImportance.Critical => "critical",
+        AtsGapImportance.Important => "important",
+        _ => "nice",
+    };
 
     /// <summary>
     /// Appends the posting's own text, collapsed and bounded. Blank lines and runs of spaces

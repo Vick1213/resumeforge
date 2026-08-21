@@ -9,20 +9,22 @@ namespace ResumeForge.Application.Tailoring;
 /// Deterministic <see cref="IPageBudgetEnforcer"/> (CONTRACTS.md §6 "Page budget"). Cut
 /// order is ascending relevance score — the single lowest-scoring still-included entry
 /// goes first each pass — with section kind breaking exact ties: certifications, then
-/// projects, then experience, since a job seeker's employment history is the substance of
-/// a resume and side projects/certifications are the padding. Certifications carry no
-/// relevance score of their own (they are not part of <see cref="CandidateSet"/> per
-/// CONTRACTS.md §5), so every certification is scored <c>0.0</c>, which in practice puts
-/// them at or ahead of the front of the cut order without needing a separate rule.
-/// Education entries are never cut: CONTRACTS.md §6 names only certifications, projects,
-/// and experience as surrenderable, and education has no relevance score to rank it by.
+/// projects. Certifications carry no relevance score of their own (they are not part of
+/// <see cref="CandidateSet"/> per CONTRACTS.md §5), so every certification is scored
+/// <c>0.0</c>, which in practice puts them at or ahead of the front of the cut order
+/// without needing a separate rule.
+/// Experience and education entries are never cut: a job seeker's employment history is
+/// the substance of a resume — a budget squeeze may surrender side projects and
+/// certifications, but a resume that silently dropped a job reads as a gap in the
+/// candidate's history, which is worse than a resume that runs long. Only the user, via
+/// <see cref="TailorOptions.ExcludedEntryIds"/>, may remove a job.
 /// An entry's score is the mean relevance of its own scored bullets (0.0 for an entry with
 /// none), read from the <see cref="CandidateSet"/> computed earlier in the tailoring graph.
-/// <see cref="TailorOptions.PinnedEntryIds"/> extends the floor (CONTRACTS.md §6 "Forced
-/// inclusion"): a pinned entry, of any cuttable kind, is never a cut candidate either, and
-/// if pins alone can't fit the budget the loop still stops at the floor rather than cutting
-/// one — <see cref="PageBudgetResult.FitsBudget"/> reports false exactly as it already does
-/// when the un-pinned floor can't fit.
+/// <see cref="TailorOptions.PinnedEntryIds"/> (CONTRACTS.md §6 "Forced inclusion") removes
+/// an entry, of any cuttable kind, from the cut candidates too, and if pins alone can't fit
+/// the budget the loop stops rather than cutting one —
+/// <see cref="PageBudgetResult.FitsBudget"/> reports false exactly as it already does when
+/// the floor can't fit.
 /// </summary>
 public sealed class PageBudgetEnforcer(IResumeRenderer renderer) : IPageBudgetEnforcer
 {
@@ -48,18 +50,12 @@ public sealed class PageBudgetEnforcer(IResumeRenderer renderer) : IPageBudgetEn
         }
 
         var scores = BuildEntryScores(candidates);
-        var floorExperienceId = FindFloorExperienceId(document, scores);
 
-        // Pinned entries (CONTRACTS.md §6 "Forced inclusion") extend the existing floor:
-        // never-cut is no longer just the single highest-scoring experience entry, it is
-        // that entry plus every user-pinned id, of any cuttable kind. ExecuteCommands has
-        // already forced each pinned entry's Included flag to true by the time this node
-        // runs, so no extra Included check is needed here beyond the usual cuttable filter.
+        // Pinned entries (CONTRACTS.md §6 "Forced inclusion") are never cut candidates.
+        // ExecuteCommands has already forced each pinned entry's Included flag to true by
+        // the time this node runs, so no extra Included check is needed here beyond the
+        // usual cuttable filter.
         var neverCut = new HashSet<string>(options.PinnedEntryIds, StringComparer.Ordinal);
-        if (floorExperienceId is not null)
-        {
-            neverCut.Add(floorExperienceId);
-        }
 
         var workingDocument = document;
         var workingDiff = new List<ResumeDiffEntry>(diff);
@@ -77,7 +73,7 @@ public sealed class PageBudgetEnforcer(IResumeRenderer renderer) : IPageBudgetEn
             var victim = FindLowestScoringCuttableEntry(workingDocument, scores, neverCut);
             if (victim is null)
             {
-                break; // only the floor remains
+                break; // nothing cuttable remains — experience and education are never cut
             }
 
             workingDocument = Exclude(workingDocument, victim.Value, maxPages.Value, out var diffEntry);
@@ -111,8 +107,7 @@ public sealed class PageBudgetEnforcer(IResumeRenderer renderer) : IPageBudgetEn
     {
         EntityKind.Certification => 0,
         EntityKind.Project => 1,
-        EntityKind.Experience => 2,
-        _ => 3,
+        _ => 2,
     };
 
     /// <summary>
@@ -146,19 +141,6 @@ public sealed class PageBudgetEnforcer(IResumeRenderer renderer) : IPageBudgetEn
         return sums.ToDictionary(kv => kv.Key, kv => kv.Value.Sum / kv.Value.Count, StringComparer.Ordinal);
     }
 
-    /// <summary>
-    /// The floor: the highest-scoring still-included experience entry, which is never a cut
-    /// candidate (CONTRACTS.md §6). Null when there are no included experience entries.
-    /// </summary>
-    private static string? FindFloorExperienceId(ResumeDocument document, IReadOnlyDictionary<string, double> scores) =>
-        document.Experience
-            .Where(e => e.Included)
-            .Select(e => (e.Id, Score: scores.GetValueOrDefault(e.Id, 0.0)))
-            .OrderByDescending(x => x.Score)
-            .ThenBy(x => x.Id, StringComparer.Ordinal)
-            .Select(x => (string?)x.Id)
-            .FirstOrDefault();
-
     private static IEnumerable<CuttableEntry> EnumerateCuttable(
         ResumeDocument document, IReadOnlyDictionary<string, double> scores, IReadOnlySet<string> neverCut)
     {
@@ -171,21 +153,11 @@ public sealed class PageBudgetEnforcer(IResumeRenderer renderer) : IPageBudgetEn
         {
             yield return new CuttableEntry(project.Id, EntityKind.Project, scores.GetValueOrDefault(project.Id, 0.0), project.Name);
         }
-
-        foreach (var experience in document.Experience.Where(e => e.Included && !neverCut.Contains(e.Id)))
-        {
-            yield return new CuttableEntry(
-                experience.Id,
-                EntityKind.Experience,
-                scores.GetValueOrDefault(experience.Id, 0.0),
-                $"{experience.Role} at {experience.Organization}");
-        }
     }
 
     private static int CountCuttable(ResumeDocument document, IReadOnlySet<string> neverCut) =>
         document.Certifications.Count(c => c.Included && !neverCut.Contains(c.Id))
-        + document.Projects.Count(p => p.Included && !neverCut.Contains(p.Id))
-        + document.Experience.Count(e => e.Included && !neverCut.Contains(e.Id));
+        + document.Projects.Count(p => p.Included && !neverCut.Contains(p.Id));
 
     private static CuttableEntry? FindLowestScoringCuttableEntry(
         ResumeDocument document, IReadOnlyDictionary<string, double> scores, IReadOnlySet<string> neverCut)
@@ -218,10 +190,6 @@ public sealed class PageBudgetEnforcer(IResumeRenderer renderer) : IPageBudgetEn
             EntityKind.Project => document with
             {
                 Projects = [.. document.Projects.Select(p => p.Id == victim.Id ? p with { Included = false } : p)],
-            },
-            EntityKind.Experience => document with
-            {
-                Experience = [.. document.Experience.Select(e => e.Id == victim.Id ? e with { Included = false } : e)],
             },
             _ => document,
         };

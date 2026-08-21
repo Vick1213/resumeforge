@@ -2,6 +2,7 @@ using System.Collections.Frozen;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using ResumeForge.Application.Tailoring;
 using ResumeForge.Domain.Resume;
 
 namespace ResumeForge.Infrastructure.Ai;
@@ -20,6 +21,13 @@ public sealed class JsonSchemaRegistry
     /// <summary>The schema for the autofill field-resolution list the model proposes.</summary>
     public const string FieldResolutionsSchemaName = "field-resolutions";
 
+    /// <summary>
+    /// The schema for the ATS review the first tailoring model call produces (CONTRACTS.md
+    /// §6 "ATS review pass"): what the posting asks for that the base resume does not
+    /// evidence, and the screen score before and after closing those gaps.
+    /// </summary>
+    public const string AtsReviewSchemaName = "ats-review";
+
     private readonly FrozenDictionary<string, JsonDocument> _schemas;
     private readonly FrozenDictionary<string, string> _payloadPropertyNames;
 
@@ -30,6 +38,7 @@ public sealed class JsonSchemaRegistry
         {
             [TailorCommandsSchemaName] = JsonDocument.Parse(TailorCommandsSchema),
             [FieldResolutionsSchemaName] = JsonDocument.Parse(FieldResolutionsSchema),
+            [AtsReviewSchemaName] = JsonDocument.Parse(AtsReviewSchema),
         }.ToFrozenDictionary();
 
         _payloadPropertyNames = _schemas.ToDictionary(
@@ -134,6 +143,71 @@ public sealed class JsonSchemaRegistry
 
     /// <summary>The legal <see cref="SectionKind"/> wire values, as a JSON array literal.</summary>
     private static string SectionKindEnumJson => JsonSerializer.Serialize(WireValuesOf<SectionKind>());
+
+    /// <summary>The legal <see cref="AtsGapImportance"/> wire values, as a JSON array literal.</summary>
+    private static string AtsGapImportanceEnumJson => JsonSerializer.Serialize(WireValuesOf<AtsGapImportance>());
+
+    private static readonly string AtsReviewSchema = $$"""
+        {
+          "type": "object",
+          "description": "A screener's reading of one resume against one job posting.",
+          "properties": {
+            "review": {
+              "type": "object",
+              "properties": {
+                "scoreBefore": {
+                  "type": "integer", "minimum": 0, "maximum": 100,
+                  "description": "How the resume scores against this posting as it stands, before any change."
+                },
+                "scoreAfter": {
+                  "type": "integer", "minimum": 0, "maximum": 100,
+                  "description": "What the same resume would score once every gap listed below is closed."
+                },
+                "verdict": {
+                  "type": "string", "maxLength": 600,
+                  "description": "One or two sentences on why the resume scores where it does."
+                },
+                "gaps": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "keyword": {
+                        "type": "string", "maxLength": 80,
+                        "description": "The posting's own term, spelled the way the posting spells it."
+                      },
+                      "importance": { "type": "string", "enum": {{AtsGapImportanceEnumJson}} },
+                      "skillsOnly": {
+                        "type": "boolean",
+                        "description": "True when the resume lists the term among its skills but no bullet puts it in context."
+                      },
+                      "placement": {
+                        "type": ["string", "null"],
+                        "description": "An entry or bullet id from the resume given, or a section name when no single bullet fits."
+                      },
+                      "angle": {
+                        "type": "string", "maxLength": 400,
+                        "description": "The claim this keyword should evidence, drawn only from material the resume already contains: what the candidate did with it and what it moved."
+                      }
+                    },
+                    "required": ["keyword", "importance", "skillsOnly", "angle"],
+                    "additionalProperties": false
+                  }
+                },
+                "recruiterNotes": {
+                  "type": "array",
+                  "items": { "type": "string", "maxLength": 400 },
+                  "description": "What a human reviewer would hold against the resume beyond keyword matching."
+                }
+              },
+              "required": ["scoreBefore", "scoreAfter", "verdict", "gaps", "recruiterNotes"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["review"],
+          "additionalProperties": false
+        }
+        """;
 
     private static readonly string TailorCommandsSchema = $$"""
         {

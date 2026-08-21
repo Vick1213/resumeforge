@@ -32,17 +32,19 @@ public sealed class PdfResumeRendererTests
     }
 
     [Fact]
-    public void Grows_a_sparse_document_to_fill_the_page_it_already_occupies()
+    public void Never_zooms_a_sparse_document_and_spends_only_bounded_spacing_on_it()
     {
-        // Nothing but a name: as much empty page as this layout can produce, so the fit
-        // search has every reason to spend its whole range.
+        // Nothing but a name: as much empty page as this layout can produce. The fit
+        // search must not respond by magnifying the type — "empty but zoomed in" is the
+        // exact look the fixed 1.0 scale exists to prevent — and the spacing it spends
+        // instead is capped at 2.0.
         var sparse = TestData.Document(basics: TestData.Basics("Jordan Rivera"), sectionOrder: []);
 
         var result = _renderer.Render(sparse);
 
         result.PageCount.ShouldBe(1);
-        result.Scale.ShouldBeGreaterThan(1.0f);
-        result.Spacing.ShouldBeGreaterThan(1.0f);
+        result.Scale.ShouldBe(1.0f);
+        result.Spacing.ShouldBeLessThanOrEqualTo(2.0f);
     }
 
     [Fact]
@@ -196,6 +198,48 @@ public sealed class PdfResumeRendererTests
         var result = _renderer.Render(document);
 
         CountGlyphShowOperators(result.Content).ShouldBe(name.Length);
+    }
+
+    [Fact]
+    public void A_tagline_on_a_project_that_already_has_bullets_is_not_rendered_at_all()
+    {
+        // The tagline restates what the bullets under it are about to evidence, at a cost of
+        // one to two full-width lines per project. Dropping it where bullets exist is the
+        // single largest density win in this layout, so the two renders must be byte-identical
+        // — not merely similar — or the line is still being paid for somewhere.
+        var bullets = new[] { TestData.Bullet("prj:app#0", "Cut cold-start time from 900ms to 120ms across 12 endpoints.") };
+
+        var withTagline = RenderingTestData.Document() with
+        {
+            Projects = [TestData.Project("prj:app", "Ledgerline", bullets: bullets, tagline: "A double-entry ledger for small businesses.")],
+        };
+        var withoutTagline = RenderingTestData.Document() with
+        {
+            Projects = [TestData.Project("prj:app", "Ledgerline", bullets: bullets)],
+        };
+
+        NormalizedText(_renderer.Render(withTagline).Content)
+            .ShouldBe(NormalizedText(_renderer.Render(withoutTagline).Content));
+    }
+
+    [Fact]
+    public void Education_highlights_do_not_render_as_bullets_of_their_own()
+    {
+        // Coursework folded into the metadata line, not given a bullet's weight and a bullet's
+        // vertical cost — see PdfResumeRenderer.EducationMetaLine.
+        var entry = TestData.Education(
+            "edu:uw", "University of Washington", "B.S. Computer Science",
+            new DateOnly(2014, 9, 1), new DateOnly(2018, 6, 1),
+            highlights: ["Coursework: Distributed Systems"]);
+
+        var withHighlights = _renderer.Render(RenderingTestData.Document() with { Education = [entry] });
+        var withoutHighlights = _renderer.Render(RenderingTestData.Document() with { Education = [entry with { Highlights = [] }] });
+
+        // A highlight still reaches the page — it is on the metadata line — so the two
+        // renders differ; what must not happen is a bullet marker appearing for it, which
+        // would show up as an extra glyph-show run rather than as a longer one.
+        NormalizedText(withHighlights.Content).ShouldNotBe(NormalizedText(withoutHighlights.Content));
+        withHighlights.PageCount.ShouldBe(withoutHighlights.PageCount);
     }
 
     private static string RawText(byte[] content) => Encoding.Latin1.GetString(content);

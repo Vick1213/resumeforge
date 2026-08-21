@@ -94,14 +94,15 @@ public sealed class PageBudgetEnforcerTests
     }
 
     [Fact]
-    public async Task The_floor_holds_basics_and_the_top_experience_entry_survive_an_impossible_budget()
+    public async Task The_floor_holds_basics_and_every_experience_entry_survive_an_impossible_budget()
     {
         var document = BuildDocument(experienceCount: 3, projectCount: 2, certificationCount: 2);
         var candidates = BuildCandidates(document);
 
         // No matter how much gets cut, the stub always reports more pages than the
         // budget allows — an impossibly small target, forcing the loop all the way to
-        // the floor.
+        // the floor. Experience is never cuttable, so the whole employment history
+        // survives even a budget that can never be met.
         var renderer = new StubRenderer(_ => 99);
         var enforcer = new PageBudgetEnforcer(renderer);
 
@@ -110,10 +111,9 @@ public sealed class PageBudgetEnforcerTests
         result.FitsBudget.ShouldBeFalse();
         result.PageCount.ShouldBe(99);
         result.Document.Basics.ShouldBe(document.Basics);
-        result.Document.Experience.Single(e => e.Id == ExpTop).Included.ShouldBeTrue();
         result.Document.Certifications.ShouldAllBe(c => !c.Included);
         result.Document.Projects.ShouldAllBe(p => !p.Included);
-        result.Document.Experience.Where(e => e.Id != ExpTop).ShouldAllBe(e => !e.Included);
+        result.Document.Experience.ShouldAllBe(e => e.Included);
     }
 
     [Fact]

@@ -57,6 +57,30 @@ public sealed class FabricationGuardTests
     }
 
     [Fact]
+    public void Rewrite_that_drops_the_metric_but_keeps_a_proper_noun_fails()
+    {
+        var passed = _guard.IsSafe(
+            "Cut cloud spend by ~$2K/month by redesigning CI/CD and hosting on AWS.",
+            "Redesigned the CI/CD, hosting, and deployment infrastructure on AWS.",
+            out var reason);
+
+        passed.ShouldBeFalse();
+        reason.ShouldNotBeNull().ShouldContain("2k/month");
+    }
+
+    [Fact]
+    public void Rewrite_of_an_unquantified_bullet_may_keep_only_its_proper_noun()
+    {
+        var passed = _guard.IsSafe(
+            "Built the core iOS interface in Swift for a medical-learning platform.",
+            "Shipped a medical-learning platform's core interface in Swift.",
+            out var reason);
+
+        passed.ShouldBeTrue();
+        reason.ShouldBeNull();
+    }
+
+    [Fact]
     public void Rewrite_that_drops_all_metrics_fails()
     {
         var passed = _guard.IsSafe(

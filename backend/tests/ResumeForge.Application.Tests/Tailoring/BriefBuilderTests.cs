@@ -27,6 +27,78 @@ public sealed class BriefBuilderTests
     }
 
     [Fact]
+    public void The_ats_review_becomes_the_brief_s_stated_objective()
+    {
+        var (baseResume, candidates) = BuildRealisticFixture(1, 2, 1, 2, 4);
+        var brief = _builder.Build(
+            TestData.Posting(), BuildRequirements(2), candidates, baseResume, new TailorOptions(), Review());
+
+        brief.ShouldContain("ATS-SCORE|54|81");
+        brief.ShouldContain("ATS-GAPS");
+        brief.ShouldContain("Kubernetes|critical|S|exp:acme#0|");
+        brief.ShouldContain("ATS-RECRUITER-NOTES");
+    }
+
+    [Fact]
+    public void A_gap_already_in_the_skills_list_is_marked_so_the_model_does_not_re_add_it_there()
+    {
+        var (baseResume, candidates) = BuildRealisticFixture(1, 2, 1, 2, 4);
+        var brief = _builder.Build(
+            TestData.Posting(), BuildRequirements(2), candidates, baseResume, new TailorOptions(), Review());
+
+        // 'S' is the flag that says the parser is already satisfied and only a bullet closes
+        // the gap; '-' says the term is absent from the document entirely.
+        var gapLines = brief.Split('\n').Where(l => l.StartsWith("Kubernetes|", StringComparison.Ordinal)
+            || l.StartsWith("Terraform|", StringComparison.Ordinal)).ToList();
+
+        gapLines.ShouldContain(l => l.StartsWith("Kubernetes|critical|S|", StringComparison.Ordinal));
+        gapLines.ShouldContain(l => l.StartsWith("Terraform|important|-|", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_brief_built_without_a_review_carries_no_ats_section_at_all()
+    {
+        // The review is advisory and may not have run (Minimal effort) or may have failed;
+        // in either case the brief must be exactly what it was before the pass existed.
+        var (baseResume, candidates) = BuildRealisticFixture(1, 2, 1, 2, 4);
+        var analysis = BuildRequirements(2);
+        var options = new TailorOptions();
+        var posting = TestData.Posting();
+
+        var withoutReview = _builder.Build(posting, analysis, candidates, baseResume, options, atsReview: null);
+
+        withoutReview.ShouldNotContain("ATS-");
+        withoutReview.ShouldBe(_builder.Build(posting, analysis, candidates, baseResume, options));
+    }
+
+    private static AtsReview Review() => new()
+    {
+        ScoreBefore = 54,
+        ScoreAfter = 81,
+        Verdict = "Strong platform work, but the posting's core infrastructure terms never appear in a bullet.",
+        Gaps =
+        [
+            new AtsGap
+            {
+                Keyword = "Kubernetes",
+                Importance = AtsGapImportance.Critical,
+                SkillsOnly = true,
+                Placement = "exp:acme#0",
+                Angle = "The deploy-time work in this bullet ran on Kubernetes; name it alongside the 40% figure.",
+            },
+            new AtsGap
+            {
+                Keyword = "Terraform",
+                Importance = AtsGapImportance.Important,
+                SkillsOnly = false,
+                Placement = null,
+                Angle = "Nothing in the resume evidences it.",
+            },
+        ],
+        RecruiterNotes = ["Two of the posting's core terms appear only in the skills list."],
+    };
+
+    [Fact]
     public void A_realistic_brief_stays_under_the_estimated_token_ceiling()
     {
         // A realistic base resume: 3 roles x 5 bullets, 2 projects x 4 bullets, 15 skills,

@@ -65,6 +65,7 @@ public static class TailorEndpoints
             MaxRewrites = request.MaxRewrites,
             Effort = request.Effort,
             MaxPages = request.MaxPages,
+            Headline = request.Headline,
             PinnedEntryIds = request.PinnedEntryIds,
             ExcludedEntryIds = request.ExcludedEntryIds,
         };

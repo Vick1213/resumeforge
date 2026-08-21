@@ -16,7 +16,9 @@ namespace ResumeForge.Infrastructure.Knowledge;
 /// variant text is extracted by direct line scanning of the body so writing it back is
 /// exactly predictable. A hard-wrapped list item — indented continuation lines under a
 /// <c>-</c> marker — is folded back into a single bullet, so such a file round-trips as
-/// one line per bullet rather than preserving its original wrap column. A malformed file
+/// one line per bullet rather than preserving its original wrap column; a wrap that split a
+/// word across the hyphen is rejoined without the space, so <c>"model-"</c> / <c>"delivery"</c>
+/// does not reach the rendered resume as <c>"model- delivery"</c>. A malformed file
 /// is recorded as a <see cref="KnowledgeBaseDiagnostic"/> and skipped; it never aborts the
 /// rest of the load.
 /// </summary>
@@ -321,7 +323,27 @@ public sealed class MarkdownKnowledgeBaseReader(
                 // truncate the bullet mid-sentence.
                 if (indent > 0 && continuation is not null)
                 {
-                    continuation.Append(' ').Append(trimmed.TrimEnd());
+                    var addition = trimmed.TrimEnd();
+
+                    // An editor that hard-wraps by hyphenating leaves the break *inside* a
+                    // word ("model-" / "delivery"). Folding that back with a space produces
+                    // "model- delivery" in the rendered resume — a defect invisible in the
+                    // source file and obvious on the printed page. The hyphen has to be
+                    // attached to a word on its left and a word on the right for this to be
+                    // a split word rather than a dash the author actually typed.
+                    var joinsSplitWord =
+                        continuation.Length >= 2 &&
+                        continuation[^1] == '-' &&
+                        char.IsLetterOrDigit(continuation[^2]) &&
+                        addition.Length > 0 &&
+                        char.IsLetter(addition[0]);
+
+                    if (!joinsSplitWord)
+                    {
+                        continuation.Append(' ');
+                    }
+
+                    continuation.Append(addition);
                     continue;
                 }
 

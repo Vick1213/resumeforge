@@ -14,10 +14,18 @@ namespace ResumeForge.Infrastructure.Rendering;
 /// </summary>
 public sealed class PdfResumeRenderer
 {
-    private static readonly string InkColor = Colors.Grey.Darken4;
-    private static readonly string MutedColor = Colors.Grey.Darken1;
-    private static readonly string AccentColor = Colors.Blue.Darken3;
-    private static readonly string RuleColor = Colors.Grey.Lighten2;
+    /// <summary>
+    /// Every glyph on the page is black. Grey secondary text and a blue accent read well on a
+    /// screen and cost the document on paper and in a scan: r/EngineeringResumes states it
+    /// outright — "Don't use grey-colored fonts since they're hard to read. Stick to black.
+    /// Make sure to use a color that is printable in grey-scale." Hierarchy is carried by
+    /// weight, size, and position instead, which survives both a photocopier and a
+    /// colour-blind reader. <see cref="RuleColor"/> is the one exception, and it is not text.
+    /// </summary>
+    private static readonly string InkColor = Colors.Black;
+    private static readonly string MutedColor = Colors.Black;
+    private static readonly string AccentColor = Colors.Black;
+    private static readonly string RuleColor = Colors.Grey.Lighten1;
 
     static PdfResumeRenderer()
     {
@@ -41,40 +49,80 @@ public sealed class PdfResumeRenderer
     /// </summary>
     private const float BaseLineHeight = 1.15f;
 
+    /// <summary>The page margin, in inches, on all four sides.</summary>
+    /// <remarks>See the note at <c>page.Margin</c> in <see cref="BuildDocument"/>.</remarks>
+    private const float PageMarginInches = 0.5f;
+
+    /// <summary>The body text size, in points.</summary>
+    /// <remarks>
+    /// 10pt, matching the dense single-page reference resumes this layout follows: they set
+    /// their body near 10pt and spend the space saved on more bullets per entry. Career-center
+    /// guides allow 10-12pt; the floor of that range is deliberate — the page should be full
+    /// of content, not of type.
+    /// </remarks>
+    private const float BodyFontSize = 10f;
+
     /// <summary>
-    /// The uniform zoom levels the fit search may choose from, ascending. A resume whose
-    /// content stops well short of the bottom of its last page reads as an unfinished
-    /// document rather than a concise one, and one that spills a few lines onto an otherwise
-    /// empty page reads worse still. Scaling the whole composition — type, spacing, and rules
-    /// together — keeps every proportion the layout was designed with, which independently
-    /// nudging font sizes would not.
+    /// Sizes for the text that is not body copy, all derived from <see cref="BodyFontSize"/>
+    /// so the page rescales as one thing. The name leads, section headings and entry titles
+    /// sit a step above the body, and the contact line and secondary metadata a step below.
     /// </summary>
     /// <remarks>
-    /// Quantized rather than continuous so the chosen zoom is reproducible and reviewable:
-    /// the same document always renders at the same step. Beyond roughly +20% the page stops
-    /// looking like the designed layout and starts looking like a photocopier setting.
-    ///
-    /// Starts at 1.0 and only grows. Shrinking below the authored size would let an
-    /// over-long resume squeeze itself under the page budget, which is the page-budget
-    /// enforcer's job to solve by excluding the lowest-scoring entries (CONTRACTS.md §6) —
-    /// quietly reducing the type instead would leave that contract's deterministic cut order
-    /// unreachable. Fitting therefore never changes how many pages a document needs; it only
-    /// decides how well it occupies them.
+    /// The header is deliberately modest: at <c>+8</c> the name, headline, and two contact
+    /// rows together consumed a seventh of the page before the first section began, which
+    /// on a dense single-page resume is space bullets should be carrying. The reference
+    /// layouts set the name at roughly 1.5× body and everything else in the header a step
+    /// below body, and that is what these follow.
     /// </remarks>
-    private static readonly float[] FitScales = [1.00f, 1.04f, 1.08f, 1.12f, 1.16f, 1.20f];
+    private const float NameFontSize = BodyFontSize + 5f;
+    private const float HeadlineFontSize = BodyFontSize - 0.5f;
+    private const float SectionHeadingFontSize = BodyFontSize + 0.5f;
+    private const float SecondaryFontSize = BodyFontSize - 1.5f;
+
+    /// <summary>
+    /// The contact rows' type size, a step under <see cref="SecondaryFontSize"/>: the header
+    /// carries up to six fields — three of them URLs — and the smaller the type, the more of
+    /// them fit on the single line the header should cost. 7.5pt matches the contact line of
+    /// the reference layouts, which set all six fields across one line.
+    /// </summary>
+    private const float ContactFontSize = BodyFontSize - 2.5f;
+
+    /// <summary>
+    /// The right-aligned date column's width. Scales with <see cref="BodyFontSize"/> so
+    /// raising the type does not push a date onto a second line. Sized for the longest range
+    /// <see cref="DateRangeFormatter"/> produces ("Sept 2025 – Sept 2026") and no wider:
+    /// every point it takes is a point the entry title on its left does not get, and a title
+    /// that wraps costs a whole line where the date column's slack costs nothing.
+    /// </summary>
+    private const float DateColumnWidth = BodyFontSize * 11f;
+
+    /// <summary>The width reserved for a bullet's marker glyph and the gap after it.</summary>
+    private const float BulletMarkerWidth = BodyFontSize * 1.15f;
+
+    /// <summary>
+    /// The uniform zoom levels the fit search may choose from. Fixed at 1.0: zooming a thin
+    /// resume up to fill its page made it read as "empty but magnified" — big type carrying
+    /// little content — which is the opposite of the dense reference layouts this renderer
+    /// follows. A page that stops short of its foot is a signal that content is missing, and
+    /// the fix belongs upstream (include more bullets and entries), never in the type size.
+    /// </summary>
+    /// <remarks>
+    /// The array and the search machinery stay so a future scale step is one edit away, and
+    /// because <see cref="PdfRenderResult.Scale"/> is part of the render contract.
+    /// </remarks>
+    private static readonly float[] FitScales = [1.00f];
 
     /// <summary>
     /// Multipliers on <see cref="BaseItemSpacing"/> the fit search may choose from, ascending.
     /// </summary>
     /// <remarks>
-    /// Zoom alone cannot close a gap at the foot of the page, because growing the type also
-    /// narrows the text box: lines rewrap, the content grows taller than the zoom implies, and
-    /// the spill point arrives while whitespace remains. Spacing has no such coupling — it
-    /// absorbs leftover height without touching a single line break — so it is searched second,
-    /// after zoom has been maximized. It applies between top-level items (sections, entries),
-    /// never within a bullet list, so the air lands where a typesetter would put it.
+    /// Spacing absorbs leftover height without touching a single line break, so it is the one
+    /// dimension the fit search still spends. Capped at 2.0×: past that the air between
+    /// sections stops reading as typesetting and starts reading as padding — the sparse look
+    /// the dense reference layouts exist to avoid. A last page that 2.0× cannot fill stays
+    /// honestly short instead of being stretched.
     /// </remarks>
-    private static readonly float[] FitSpacings = [1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f];
+    private static readonly float[] FitSpacings = [1.0f, 1.25f, 1.5f, 1.75f, 2.0f];
 
     /// <summary>The gap between top-level column items at spacing multiplier <c>1.0</c>.</summary>
     private const float BaseItemSpacing = 2f;
@@ -170,7 +218,13 @@ public sealed class PdfResumeRenderer
             container.Page(page =>
             {
                 page.Size(PageSizes.Letter);
-                page.Margin(0.25f, Unit.Inch);
+
+                // 0.5in margins: the floor every source that publishes one agrees on —
+                // r/EngineeringResumes ("minimum 0.4 inches"), CMU SCS ("no smaller than
+                // 0.5\""), Harvard, Berkeley, MIT. The previous 0.25in setting cleared none
+                // of them, and it also stretched a bullet line far past the 45-90 characters
+                // typography treats as readable.
+                page.Margin(PageMarginInches, Unit.Inch);
 
                 // Ligatures ("fi", "ft", "ti"...) are a display nicety that subsetted PDF
                 // fonts pay for at ATS's expense: the glyph a ligature draws often has no
@@ -178,7 +232,7 @@ public sealed class PdfResumeRenderer
                 // extract as "So�ware" and "En�ty". Disabled globally — every text element in
                 // the document inherits this — since no amount of visual polish is worth an
                 // ATS parser mangling the resume's own words.
-                page.DefaultTextStyle(x => x.FontSize(9f).FontColor(InkColor).LineHeight(BaseLineHeight)
+                page.DefaultTextStyle(x => x.FontSize(BodyFontSize).FontColor(InkColor).LineHeight(BaseLineHeight)
                     .DisableFontFeature(FontFeatures.StandardLigatures));
 
                 // Scale wraps the whole content box: QuestPDF lays the column out in a
@@ -223,52 +277,135 @@ public sealed class PdfResumeRenderer
 
     private static void ComposeHeader(ColumnDescriptor column, ResumeBasics basics)
     {
-        column.Item().Text(basics.FullName).FontSize(17f).Bold().FontColor(InkColor).AlignCenter();
-
-        if (!string.IsNullOrWhiteSpace(basics.Headline))
+        // The whole header is one top-level item with no internal spacing: the fit search's
+        // spacing multiplier belongs between sections and entries, and letting it open gaps
+        // between a name and its own contact line was a good part of how the header grew to
+        // a seventh of the page.
+        column.Item().Column(header =>
         {
-            column.Item().Text(basics.Headline).FontSize(10f).SemiBold().FontColor(AccentColor).AlignCenter();
-        }
+            header.Spacing(0);
 
-        var parts = ContactParts(basics).ToList();
-        if (parts.Count > 0)
-        {
-            column.Item().Text(text =>
+            header.Item().Text(basics.FullName).FontSize(NameFontSize).Bold().FontColor(InkColor).AlignCenter();
+
+            if (!string.IsNullOrWhiteSpace(basics.Headline))
             {
-                text.AlignCenter();
+                header.Item().Text(basics.Headline).FontSize(HeadlineFontSize).SemiBold().FontColor(AccentColor).AlignCenter();
+            }
 
-                // Every span in this block — plain or hyperlinked — carries the same size and
-                // color, so turning a field into a link changes nothing but its clickability.
-                text.DefaultTextStyle(x => x.FontSize(8f).FontColor(MutedColor));
+            // Split deliberately rather than letting the line wrap: a wrap chosen by the
+            // layout engine lands mid-URL, which reads as a broken document rather than a
+            // full one. At ContactFontSize a full six-field header (three of them URLs)
+            // fits one line; identity fields go first and links second when it does not,
+            // so a second row looks like a decision.
+            var identity = ContactParts(basics, links: false).ToList();
+            var links = ContactParts(basics, links: true).ToList();
 
-                for (var i = 0; i < parts.Count; i++)
-                {
-                    if (i > 0)
-                    {
-                        text.Span("   ·   ");
-                    }
+            if (FitsOneContactRow(identity.Count + links.Count, [.. identity, .. links]))
+            {
+                ComposeContactRow(header, [.. identity, .. links]);
+                return;
+            }
 
-                    var (display, href) = parts[i];
-                    if (href is null)
-                    {
-                        text.Span(display);
-                    }
-                    else
-                    {
-                        text.Hyperlink(display, href);
-                    }
-                }
-            });
+            ComposeContactRow(header, identity);
+            ComposeContactRow(header, links);
+        });
+    }
+
+    /// <summary>
+    /// Whether every contact field fits on one centered line, measured rather than counted:
+    /// the joined display text — fields plus the separator between each pair — against the
+    /// character budget one line of <see cref="SecondaryFontSize"/> type holds across a
+    /// Letter page's content width.
+    /// </summary>
+    /// <remarks>
+    /// The rule used to be "four fields or fewer", which split a header carrying six short
+    /// ones (a city, a phone number, and four scheme-stripped hostnames) that a single line
+    /// holds comfortably, and cost a line to do it. Length is what actually decides whether a
+    /// line wraps, so length is what is checked. The budget is deliberately conservative:
+    /// overshooting hands the wrap point to the layout engine, which lands it mid-URL.
+    /// </remarks>
+    private static bool FitsOneContactRow(int fieldCount, IReadOnlyList<(string Display, string? Href)> parts)
+    {
+        if (fieldCount == 0)
+        {
+            return true;
         }
+
+        var length = parts.Sum(p => p.Display.Length) + (ContactSeparator.Length * (fieldCount - 1));
+        return length <= SingleRowContactCharBudget;
+    }
+
+    /// <summary>
+    /// Roughly how many characters of <see cref="ContactFontSize"/> type one centered line
+    /// holds across the content width a Letter page leaves inside
+    /// <see cref="PageMarginInches"/> margins. Scaled from the same wrap measurement behind
+    /// <see cref="Domain.Formatting.BulletLineFit.CharsPerLine"/> (~110 wide-case characters
+    /// at 10pt → ~146 at 7.5pt), then held under it so a header of unusually wide characters
+    /// still clears the line. Contact text — hostnames, digits, an email — runs narrower
+    /// than the mixed-case prose that measurement used, so the margin is real.
+    /// </summary>
+    private const int SingleRowContactCharBudget = 142;
+
+    /// <summary>What sits between two adjacent contact fields on the same row.</summary>
+    private const string ContactSeparator = " | ";
+
+    private static void ComposeContactRow(ColumnDescriptor column, IReadOnlyList<(string Display, string? Href)> parts)
+    {
+        if (parts.Count == 0)
+        {
+            return;
+        }
+
+        column.Item().Text(text =>
+        {
+            text.AlignCenter();
+
+            // Every span in this block — plain or hyperlinked — carries the same size and
+            // color, so turning a field into a link changes nothing but its clickability.
+            text.DefaultTextStyle(x => x.FontSize(ContactFontSize).FontColor(MutedColor));
+
+            for (var i = 0; i < parts.Count; i++)
+            {
+                if (i > 0)
+                {
+                    text.Span(ContactSeparator);
+                }
+
+                var (display, href) = parts[i];
+                if (href is null)
+                {
+                    text.Span(display);
+                }
+                else
+                {
+                    text.Hyperlink(display, href);
+                }
+            }
+        });
     }
 
     /// <summary>
     /// The header contact fields in display order, each paired with the URL it should link to
     /// (a <c>mailto:</c> link for email, the full original URL for website/LinkedIn/GitHub),
-    /// or a null href for fields that stay plain text (phone, location).
+    /// or a null href for fields that stay plain text (phone, location). Split into the two
+    /// rows the header may use: <paramref name="links"/> selects the website/LinkedIn/GitHub
+    /// group, otherwise the email/phone/location group.
     /// </summary>
-    private static IEnumerable<(string Display, string? Href)> ContactParts(ResumeBasics basics)
+    private static IEnumerable<(string Display, string? Href)> ContactParts(ResumeBasics basics, bool links)
     {
+        if (links)
+        {
+            foreach (var url in new[] { basics.Website, basics.LinkedIn, basics.GitHub })
+            {
+                if (!string.IsNullOrWhiteSpace(url))
+                {
+                    yield return (ForDisplay(url), url.Trim());
+                }
+            }
+
+            yield break;
+        }
+
         if (!string.IsNullOrWhiteSpace(basics.Email))
         {
             yield return (ForDisplay(basics.Email), $"mailto:{basics.Email.Trim()}");
@@ -282,14 +419,6 @@ public sealed class PdfResumeRenderer
         if (!string.IsNullOrWhiteSpace(basics.Location))
         {
             yield return (ForDisplay(basics.Location), null);
-        }
-
-        foreach (var url in new[] { basics.Website, basics.LinkedIn, basics.GitHub })
-        {
-            if (!string.IsNullOrWhiteSpace(url))
-            {
-                yield return (ForDisplay(url), url.Trim());
-            }
         }
     }
 
@@ -319,10 +448,24 @@ public sealed class PdfResumeRenderer
         return trimmed.TrimEnd('/');
     }
 
+    /// <summary>
+    /// Composes a section heading and the rule under it as a <em>single</em> top-level item.
+    /// </summary>
+    /// <remarks>
+    /// The two used to be separate items, which put the fit search's spacing multiplier
+    /// between the heading and its own rule, and again between that rule and the section's
+    /// first line. At the wide end of <see cref="FitSpacings"/> that reads as a heading
+    /// floating free of everything it labels — air is only worth spending between things
+    /// that are genuinely separate. Nesting them fixes their relationship at the authored
+    /// gap regardless of what multiplier fills the page.
+    /// </remarks>
     private static void ComposeSectionHeading(ColumnDescriptor column, string title)
     {
-        column.Item().PaddingTop(1).Text(title.ToUpperInvariant()).FontSize(9f).Bold().FontColor(AccentColor);
-        column.Item().PaddingBottom(0.5f).LineHorizontal(0.5f).LineColor(RuleColor);
+        column.Item().EnsureSpace(KeepWithNextHeight).PaddingTop(1).Column(heading =>
+        {
+            heading.Item().Text(title.ToUpperInvariant()).FontSize(SectionHeadingFontSize).Bold().FontColor(AccentColor);
+            heading.Item().PaddingBottom(0.5f).LineHorizontal(0.5f).LineColor(RuleColor);
+        });
     }
 
     private static void ComposeSummary(ColumnDescriptor column, string? summary)
@@ -333,7 +476,7 @@ public sealed class PdfResumeRenderer
         }
 
         ComposeSectionHeading(column, "Summary");
-        column.Item().Text(summary.Replace('\n', ' '));
+        ComposeJustified(column, summary.Replace('\n', ' '));
     }
 
     private static void ComposeSkills(ColumnDescriptor column, IReadOnlyList<SkillGroup> groups)
@@ -346,13 +489,24 @@ public sealed class PdfResumeRenderer
 
         ComposeSectionHeading(column, "Skills");
 
-        foreach (var group in included)
+        // The whole block is one item: consecutive skill rows are a list, not a sequence of
+        // sections, and the fit search's spacing multiplier between them would pull a
+        // five-row block apart down the page — the same reasoning as ComposeSectionHeading.
+        column.Item().Column(skills =>
         {
-            column.Item().Row(row =>
+            foreach (var group in included)
             {
-                row.ConstantItem(120).Text(group.Label).Bold();
-                row.RelativeItem().Text(text =>
+                // The label leads the same line its skills run on, rather than sitting in a
+                // fixed left column. A column wide enough for "Cloud & Infrastructure"
+                // reserves that width on every row, including the ones labeled "Other", and
+                // then wraps the skills into the narrow remainder — which is how a five-group
+                // skills block grew to eat a third of the page. Inline, each group costs the
+                // lines its own content needs and nothing more, and the block reads as the
+                // dense reference footer a skills section is supposed to be.
+                skills.Item().Text(text =>
                 {
+                    text.Span(group.Label + ": ").Bold();
+
                     foreach (var skill in group.Items)
                     {
                         var span = text.Span(skill.Name + (skill == group.Items[^1] ? string.Empty : ", "));
@@ -362,8 +516,8 @@ public sealed class PdfResumeRenderer
                         }
                     }
                 });
-            });
-        }
+            }
+        });
     }
 
     private static void ComposeExperience(ColumnDescriptor column, IReadOnlyList<ExperienceEntry> entries)
@@ -378,7 +532,7 @@ public sealed class PdfResumeRenderer
 
         foreach (var entry in included)
         {
-            column.Item().Column(entryColumn =>
+            column.Item().EnsureSpace(KeepWithNextHeight).Column(entryColumn =>
             {
                 var titleSuffix = string.IsNullOrWhiteSpace(entry.Location) ? string.Empty : $" · {entry.Location}";
 
@@ -392,7 +546,7 @@ public sealed class PdfResumeRenderer
                             text.Span(titleSuffix).FontColor(MutedColor);
                         }
                     });
-                    row.ConstantItem(140).AlignRight().Text(DateRangeFormatter.Format(entry.StartDate, entry.EndDate)).FontColor(MutedColor);
+                    row.ConstantItem(DateColumnWidth).AlignRight().Text(DateRangeFormatter.Format(entry.StartDate, entry.EndDate)).FontColor(MutedColor);
                 });
 
                 ComposeBullets(entryColumn, entry.Bullets.Select(b => b.Text));
@@ -412,7 +566,7 @@ public sealed class PdfResumeRenderer
 
         foreach (var entry in included)
         {
-            column.Item().Column(entryColumn =>
+            column.Item().EnsureSpace(KeepWithNextHeight).Column(entryColumn =>
             {
                 entryColumn.Item().Row(row =>
                 {
@@ -427,23 +581,23 @@ public sealed class PdfResumeRenderer
                                 continue;
                             }
 
-                            text.Span("   ·   ").FontSize(8f).FontColor(MutedColor);
-                            text.Hyperlink(ForDisplay(url), url.Trim()).FontSize(8f).FontColor(MutedColor);
+                            text.Span("   ·   ").FontSize(SecondaryFontSize).FontColor(MutedColor);
+                            text.Hyperlink(ForDisplay(url), url.Trim()).FontSize(SecondaryFontSize).FontColor(MutedColor);
                         }
                     });
 
                     var range = FormatOptionalRange(entry.StartDate, entry.EndDate);
                     if (range is not null)
                     {
-                        row.ConstantItem(140).AlignRight().Text(range).FontColor(MutedColor);
+                        row.ConstantItem(DateColumnWidth).AlignRight().Text(range).FontColor(MutedColor);
                     }
                 });
 
-                if (!string.IsNullOrWhiteSpace(entry.Tagline))
+                if (entry.ShouldRenderTagline(out var tagline))
                 {
-                    // Italic gives each project entry a visible rhythm: bold name (+ links),
-                    // italic tagline, plain bullets.
-                    entryColumn.Item().Text(entry.Tagline).FontSize(9).FontColor(MutedColor).Italic();
+                    // Italic gives a bullet-less project entry a visible rhythm: bold name
+                    // (+ links), italic tagline.
+                    entryColumn.Item().Text(tagline).FontSize(SecondaryFontSize).FontColor(MutedColor).Italic();
                 }
 
                 ComposeBullets(entryColumn, entry.Bullets.Select(b => b.Text));
@@ -463,7 +617,7 @@ public sealed class PdfResumeRenderer
 
         foreach (var entry in included)
         {
-            column.Item().Column(entryColumn =>
+            column.Item().EnsureSpace(KeepWithNextHeight).Column(entryColumn =>
             {
                 entryColumn.Item().Row(row =>
                 {
@@ -472,22 +626,47 @@ public sealed class PdfResumeRenderer
                     var range = FormatOptionalRange(entry.StartDate, entry.EndDate);
                     if (range is not null)
                     {
-                        row.ConstantItem(140).AlignRight().Text(range).FontColor(MutedColor);
+                        row.ConstantItem(DateColumnWidth).AlignRight().Text(range).FontColor(MutedColor);
                     }
                 });
 
-                var meta = entry.Gpa is { } gpa
-                    ? $"{entry.Location}   GPA: {gpa.ToString("0.00", CultureInfo.InvariantCulture)}"
-                    : entry.Location;
-
-                if (!string.IsNullOrWhiteSpace(meta))
+                var meta = EducationMetaLine(entry);
+                if (meta is not null)
                 {
-                    entryColumn.Item().Text(meta).FontSize(9).FontColor(MutedColor);
+                    entryColumn.Item().Text(meta).FontSize(SecondaryFontSize).FontColor(MutedColor).Italic();
                 }
-
-                ComposeBullets(entryColumn, entry.Highlights);
             });
         }
+    }
+
+    /// <summary>
+    /// An education entry's whole secondary line — location, GPA, and every highlight —
+    /// joined with " · ", or null when the entry has none of them.
+    /// </summary>
+    /// <remarks>
+    /// Highlights used to render as bullets under the entry, which gave a single line of
+    /// coursework the same visual weight, and the same vertical cost, as a bullet describing
+    /// a year of work. Folded into the metadata line they read the way every reference
+    /// format sets them — "GPA: 3.5 · Coursework: …" — and a degree costs two lines instead
+    /// of four.
+    /// </remarks>
+    internal static string? EducationMetaLine(EducationEntry entry)
+    {
+        var parts = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(entry.Location))
+        {
+            parts.Add(entry.Location.Trim());
+        }
+
+        if (entry.Gpa is { } gpa)
+        {
+            parts.Add($"GPA: {gpa.ToString("0.00", CultureInfo.InvariantCulture)}");
+        }
+
+        parts.AddRange(entry.Highlights.Where(h => !string.IsNullOrWhiteSpace(h)).Select(h => h.Trim()));
+
+        return parts.Count == 0 ? null : string.Join("  ·  ", parts);
     }
 
     private static void ComposeCertifications(ColumnDescriptor column, IReadOnlyList<CertificationEntry> entries)
@@ -502,7 +681,7 @@ public sealed class PdfResumeRenderer
 
         foreach (var entry in included)
         {
-            var issued = entry.IssuedOn is { } issuedOn ? issuedOn.ToString("MMM yyyy", CultureInfo.InvariantCulture) : null;
+            var issued = entry.IssuedOn is { } issuedOn ? DateRangeFormatter.FormatMonth(issuedOn) : null;
             var suffix = string.Join(", ", new[] { entry.Issuer, issued }.Where(v => !string.IsNullOrWhiteSpace(v)));
 
             column.Item().Text(text =>
@@ -520,13 +699,47 @@ public sealed class PdfResumeRenderer
     {
         foreach (var bulletText in bullets)
         {
-            entryColumn.Item().Row(row =>
+            // A bullet is one or two lines by construction (see BulletLineFit), so keeping it
+            // whole can never strand more than that, and a bullet broken across a page break
+            // is unreadable in exactly the place a reader is least willing to work for it.
+            entryColumn.Item().PreventPageBreak().Row(row =>
             {
-                row.ConstantItem(10).Text("•");
-                row.RelativeItem().Text(bulletText);
+                row.ConstantItem(BulletMarkerWidth).Text("•");
+                ComposeJustified(row.RelativeItem(), bulletText);
             });
         }
     }
+
+    /// <summary>
+    /// Sets <paramref name="text"/> justified — flush on both edges rather than ragged-right.
+    /// </summary>
+    /// <remarks>
+    /// A justified line carries every word it can before wrapping, so a bullet written near
+    /// the top of a <see cref="BulletLineFit"/> band keeps its last line full instead of
+    /// stranding two words on it; across a page of bullets that is the difference between
+    /// filling the column and leaving a ragged edge down the right of the document. It also
+    /// matches how the reference layouts this renderer follows set their body copy. Word
+    /// spacing is the only thing it stretches — no line breaks move, and no glyph changes —
+    /// so <see cref="BulletLineFit"/>'s character estimate stays exactly as calibrated.
+    /// </remarks>
+    private static void ComposeJustified(IContainer container, string text) =>
+        container.Text(descriptor =>
+        {
+            descriptor.Justify();
+            descriptor.Span(text);
+        });
+
+    /// <inheritdoc cref="ComposeJustified(IContainer, string)"/>
+    private static void ComposeJustified(ColumnDescriptor column, string text) =>
+        ComposeJustified(column.Item(), text);
+
+    /// <summary>
+    /// The height an entry — or a section heading — must have available before it may start on
+    /// the current page. Below it, the element moves to the next page rather than leaving a
+    /// heading or a job title stranded at the foot of this one with nothing under it.
+    /// Approximately a title row plus two bullet lines.
+    /// </summary>
+    private static float KeepWithNextHeight => BodyFontSize * BaseLineHeight * 3.2f;
 
     private static string? FormatOptionalRange(DateOnly? start, DateOnly? end)
     {
@@ -535,7 +748,7 @@ public sealed class PdfResumeRenderer
             return DateRangeFormatter.Format(s, end);
         }
 
-        return end is { } e ? e.ToString("MMM yyyy", CultureInfo.InvariantCulture) : null;
+        return end is { } e ? DateRangeFormatter.FormatMonth(e) : null;
     }
 }
 

@@ -200,7 +200,7 @@ public sealed class MarkdownResumeRenderer
             sb.Append("- ").Append(entry.Name);
 
             var issuer = entry.Issuer;
-            var issued = entry.IssuedOn is { } issuedOn ? issuedOn.ToString("MMM yyyy", System.Globalization.CultureInfo.InvariantCulture) : null;
+            var issued = entry.IssuedOn is { } issuedOn ? DateRangeFormatter.FormatMonth(issuedOn) : null;
             var meta = JoinMeta(issuer, issued);
             if (meta is not null)
             {
@@ -228,7 +228,7 @@ public sealed class MarkdownResumeRenderer
             return DateRangeFormatter.Format(s, end);
         }
 
-        return end is { } e ? e.ToString("MMM yyyy", System.Globalization.CultureInfo.InvariantCulture) : null;
+        return end is { } e ? DateRangeFormatter.FormatMonth(e) : null;
     }
 
     private static void AddIfPresent(List<string> parts, string? value)

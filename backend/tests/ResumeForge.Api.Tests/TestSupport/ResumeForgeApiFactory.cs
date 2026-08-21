@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using ResumeForge.Infrastructure.Ai;
 using ResumeForge.Infrastructure.GitHub;
 
 namespace ResumeForge.Api.Tests.TestSupport;
@@ -12,16 +13,21 @@ namespace ResumeForge.Api.Tests.TestSupport;
 /// A <see cref="WebApplicationFactory{Program}"/> that points the running app at an
 /// isolated temp knowledge-base directory and an isolated temp SQLite database file, so
 /// integration tests never touch a developer's real <c>profile/</c> data or database.
-/// Also clears <c>ANTHROPIC_API_KEY</c> for the lifetime of the factory so
-/// <c>ILanguageModel</c> always resolves to the no-network heuristic implementation,
-/// regardless of what the host machine's environment happens to have set — keeping these
-/// tests deterministic and network-free (see CONTRACTS.md §8).
+/// Also clears every provider API key in
+/// <see cref="AiProviderCatalog.KeyEnvironmentVariables"/> for the lifetime of the factory,
+/// and pins <c>ResumeForge:Ai:Provider</c> to <c>heuristic</c>, so <c>ILanguageModel</c>
+/// always resolves to the no-network heuristic implementation regardless of what the host
+/// machine's environment happens to have set — keeping these tests deterministic and
+/// network-free (see CONTRACTS.md §8). Clearing one named key was not enough: a developer
+/// with <c>DEEPSEEK_API_KEY</c> exported (as <c>scripts/dev.sh</c> arranges) had <c>auto</c>
+/// resolve to a real hosted provider, which failed four tests on their machine and none in
+/// CI.
 /// </summary>
 public sealed class ResumeForgeApiFactory : WebApplicationFactory<Program>
 {
     private readonly string _profileRoot;
     private readonly string _dbPath;
-    private readonly string? _previousApiKey;
+    private readonly Dictionary<string, string?> _previousApiKeys = [];
 
     /// <summary>Creates the factory, writing the fixture profile and clearing the API key.</summary>
     public ResumeForgeApiFactory()
@@ -33,8 +39,11 @@ public sealed class ResumeForgeApiFactory : WebApplicationFactory<Program>
         Directory.CreateDirectory(root);
         TestProfileFixture.Write(_profileRoot);
 
-        _previousApiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-        Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", null);
+        foreach (var variable in AiProviderCatalog.KeyEnvironmentVariables)
+        {
+            _previousApiKeys[variable] = Environment.GetEnvironmentVariable(variable);
+            Environment.SetEnvironmentVariable(variable, null);
+        }
     }
 
     /// <summary>The single stub repository <see cref="StubGitHubRepoJson"/> returns for the GitHub API, by name.</summary>
@@ -51,6 +60,7 @@ public sealed class ResumeForgeApiFactory : WebApplicationFactory<Program>
             {
                 ["ConnectionStrings:ResumeForge"] = $"Data Source={_dbPath}",
                 ["ResumeForge:ProfileRoot"] = _profileRoot,
+                ["ResumeForge:Ai:Provider"] = AiProviderCatalog.Heuristic.Name,
             });
         });
 
@@ -111,7 +121,10 @@ public sealed class ResumeForgeApiFactory : WebApplicationFactory<Program>
             return;
         }
 
-        Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", _previousApiKey);
+        foreach (var (variable, value) in _previousApiKeys)
+        {
+            Environment.SetEnvironmentVariable(variable, value);
+        }
 
         TryDeleteDirectory(Path.GetDirectoryName(_profileRoot));
     }

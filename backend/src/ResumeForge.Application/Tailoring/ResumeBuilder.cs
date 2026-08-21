@@ -22,6 +22,21 @@ public sealed class ResumeBuilder(ISkillTaxonomy taxonomy, TimeProvider timeProv
     private const string OtherCategory = "other";
     private const string OtherLabel = "Other";
 
+    /// <summary>
+    /// The section order before <see cref="SectionOrderPolicy"/> sees it: the conventional
+    /// experience-first shape. The policy hoists education above the work history for a
+    /// candidate still studying or recently graduated, and leaves this list alone otherwise.
+    /// </summary>
+    private static readonly SectionKind[] DefaultSectionOrder =
+    [
+        SectionKind.Summary,
+        SectionKind.Skills,
+        SectionKind.Experience,
+        SectionKind.Projects,
+        SectionKind.Education,
+        SectionKind.Certifications,
+    ];
+
     private static readonly string[] CategoryOrder =
         ["languages", "frameworks", "datastores", "cloud", "practices", "tools", "soft"];
 
@@ -49,6 +64,8 @@ public sealed class ResumeBuilder(ISkillTaxonomy taxonomy, TimeProvider timeProv
 
         var now = timeProvider.GetUtcNow();
 
+        var education = educationItems.Select(BuildEducationEntry).ToList();
+
         return new ResumeDocument
         {
             Id = id ?? Guid.NewGuid().ToString(),
@@ -58,17 +75,9 @@ public sealed class ResumeBuilder(ISkillTaxonomy taxonomy, TimeProvider timeProv
             Skills = BuildSkillGroups(experienceItems.Concat(projectItems)),
             Experience = [.. experienceItems.Select(BuildExperienceEntry)],
             Projects = [.. projectItems.Select(BuildProjectEntry)],
-            Education = [.. educationItems.Select(BuildEducationEntry)],
+            Education = education,
             Certifications = [.. certificationItems.Select(BuildCertificationEntry)],
-            SectionOrder =
-            [
-                SectionKind.Summary,
-                SectionKind.Education,
-                SectionKind.Skills,
-                SectionKind.Experience,
-                SectionKind.Projects,
-                SectionKind.Certifications,
-            ],
+            SectionOrder = SectionOrderPolicy.Normalize(DefaultSectionOrder, education, now),
             CreatedAt = now,
             UpdatedAt = now,
         };

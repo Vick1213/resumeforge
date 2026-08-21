@@ -24,8 +24,12 @@ public sealed class TailoringService(
         var budgeted = GetOutput<PageBudgetResult>(runResult, TailoringGraphFactory.EnforcePageBudget)
             ?? throw new InvalidOperationException("Tailoring graph did not produce an enforce-page-budget result.");
 
-        var validation = GetOutput<CommandValidationResult>(runResult, TailoringGraphFactory.ValidateCommands)
-            ?? throw new InvalidOperationException("Tailoring graph did not produce a validate-commands result.");
+        // The repair node's output is the authoritative command set: first-round acceptances
+        // plus whatever the repair round rescued, minus the rejections it resolved. It is a
+        // pass-through of validate-commands whenever there was nothing to repair.
+        var validation = GetOutput<CommandValidationResult>(runResult, TailoringGraphFactory.RepairCommands)
+            ?? GetOutput<CommandValidationResult>(runResult, TailoringGraphFactory.ValidateCommands)
+            ?? throw new InvalidOperationException("Tailoring graph did not produce a validated command result.");
 
         var coverage = GetOutput<CoverageReport>(runResult, TailoringGraphFactory.VerifyCoverage)
             ?? new CoverageReport { Score = 0.0, Requirements = [] };
@@ -36,6 +40,7 @@ public sealed class TailoringService(
             Diff = budgeted.Diff,
             Commands = validation,
             Coverage = coverage,
+            AtsReview = GetOutput<AtsReview>(runResult, TailoringGraphFactory.AtsReview),
             Usage = runResult.Usage,
             Trace = runResult.Trace,
             PageCount = budgeted.PageCount,

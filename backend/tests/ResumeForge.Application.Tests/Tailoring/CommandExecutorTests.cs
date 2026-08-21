@@ -262,6 +262,24 @@ public sealed class CommandExecutorTests
     }
 
     [Fact]
+    public void Set_section_order_cannot_demote_a_recent_graduates_education()
+    {
+        var degree = TestData.Education(
+            "edu:asu", "Arizona State University", "B.S. Computer Science",
+            new DateOnly(2022, 8, 1), new DateOnly(2025, 12, 1));
+        var doc = NewDocument() with
+        {
+            Education = [degree],
+            SectionOrder = [SectionKind.Summary, SectionKind.Education, SectionKind.Experience],
+        };
+
+        var result = _executor.Execute(
+            doc, [new SetSectionOrderCommand { Order = [SectionKind.Summary, SectionKind.Experience, SectionKind.Education] }]);
+
+        result.Document.SectionOrder.ShouldBe([SectionKind.Summary, SectionKind.Education, SectionKind.Experience]);
+    }
+
+    [Fact]
     public void Order_command_reorders_bullets_within_an_entry()
     {
         var doc = NewDocument();

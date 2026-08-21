@@ -36,6 +36,12 @@ public sealed record TailorRequest
     public bool DryRun { get; init; }
 
     /// <summary>
+    /// A custom headline for the tailored resume (CONTRACTS.md §2 "Tailored headline").
+    /// Non-blank replaces the job-title-derived headline; null or blank keeps the default.
+    /// </summary>
+    public string? Headline { get; init; }
+
+    /// <summary>
     /// Entry ids (<c>exp:</c>, <c>prj:</c>, <c>edu:</c>, <c>cert:</c> — the same ids
     /// CONTRACTS.md §6's command protocol targets and <c>GET /api/knowledge</c> returns)
     /// forced into the tailored resume, overriding both the model's include/exclude

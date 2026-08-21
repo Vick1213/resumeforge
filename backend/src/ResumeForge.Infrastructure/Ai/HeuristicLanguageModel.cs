@@ -47,7 +47,7 @@ namespace ResumeForge.Infrastructure.Ai;
 /// </item>
 /// </list>
 /// </summary>
-public sealed class HeuristicLanguageModel(TailorOptions tailorOptions, IKnowledgeBaseReader knowledgeBaseReader, ISkillTaxonomy skillTaxonomy) : ILanguageModel
+public sealed partial class HeuristicLanguageModel(TailorOptions tailorOptions, IKnowledgeBaseReader knowledgeBaseReader, ISkillTaxonomy skillTaxonomy) : ILanguageModel
 {
     private const string RequirementsHeader = "REQUIREMENTS";
     private const string ExperienceHeader = "CANDIDATES-EXPERIENCE";
@@ -81,9 +81,11 @@ public sealed class HeuristicLanguageModel(TailorOptions tailorOptions, IKnowled
         {
             JsonSchemaRegistry.TailorCommandsSchemaName => await BuildCommandsAsync(request.User, ct).ConfigureAwait(false),
             JsonSchemaRegistry.FieldResolutionsSchemaName => await ResolveFieldsAsync(request.User, ct).ConfigureAwait(false),
+            JsonSchemaRegistry.AtsReviewSchemaName => ReviewAts(request.User),
             _ => throw new NotSupportedException(
                 $"{nameof(HeuristicLanguageModel)} does not support schema '{request.SchemaName}'; it only proposes " +
-                $"'{JsonSchemaRegistry.TailorCommandsSchemaName}' and '{JsonSchemaRegistry.FieldResolutionsSchemaName}'."),
+                $"'{JsonSchemaRegistry.TailorCommandsSchemaName}', '{JsonSchemaRegistry.FieldResolutionsSchemaName}', " +
+                $"and '{JsonSchemaRegistry.AtsReviewSchemaName}'."),
         };
 
         // Round-trip through JSON rather than casting directly, so this works for any T the
@@ -101,13 +103,202 @@ public sealed class HeuristicLanguageModel(TailorOptions tailorOptions, IKnowled
         };
     }
 
+
+    private const string AtsPostingHeader = "JOB POSTING";
+    private const string AtsResumeHeaderPrefix = "RESUME";
+    private const string AtsSkillsHeading = "## Skills";
+
+    /// <summary>
+    /// The no-network <c>"ats-review"</c> answer: which of the posting's taxonomy skills the
+    /// resume evidences, and where.
+    /// </summary>
+    /// <remarks>
+    /// This is a genuine, if blunt, version of the two-gate reading the real prompt asks for,
+    /// built from the one thing a no-network implementation can actually check — whether a
+    /// term the posting uses appears in the resume, and whether it appears anywhere other
+    /// than the skills list. That second check is what makes it worth having offline at all:
+    /// "you list Kubernetes but no bullet mentions it" is the most common real finding, and
+    /// it needs no judgement to reach.
+    ///
+    /// What it cannot do is write the <c>angle</c> — the specific claim a keyword should
+    /// evidence — because that requires reading the candidate's material and deciding which
+    /// piece of it supports the term. It says so plainly in each gap's angle rather than
+    /// inventing one; a fabricated angle here would be read by the command pass as license to
+    /// write a bullet the candidate cannot support, which is the exact failure the whole
+    /// pipeline is built to prevent. The scores are stated as what they are: a keyword-match
+    /// ratio, not a screener's judgement.
+    /// </remarks>
+    private AtsReview ReviewAts(string user)
+    {
+        var (postingText, resumeText) = SplitAtsBrief(user);
+
+        var postingSkills = CanonicalSkillsIn(postingText);
+        if (postingSkills.Count == 0)
+        {
+            return new AtsReview
+            {
+                ScoreBefore = 100,
+                ScoreAfter = 100,
+                Verdict = "No recognizable technology terms were found in this posting, so there is nothing to match against offline.",
+                Gaps = [],
+                RecruiterNotes = [],
+            };
+        }
+
+        // The resume split at its skills heading: everything before and after it is prose the
+        // candidate wrote about their work, and a term found only between the heading and the
+        // next one is a term that exists as a list item and nowhere else.
+        var (skillsSection, narrative) = SplitResumeSkillsSection(resumeText);
+        var narrativeSkills = CanonicalSkillsIn(narrative);
+        var listedSkills = CanonicalSkillsIn(skillsSection);
+
+        var gaps = new List<AtsGap>();
+        foreach (var skill in postingSkills.OrderBy(s => s, StringComparer.Ordinal))
+        {
+            if (narrativeSkills.Contains(skill))
+            {
+                continue;
+            }
+
+            var display = skillTaxonomy.DisplayNameOf(skill);
+            var skillsOnly = listedSkills.Contains(skill);
+
+            gaps.Add(new AtsGap
+            {
+                Keyword = display,
+                Importance = skillsOnly ? AtsGapImportance.Important : AtsGapImportance.Critical,
+                SkillsOnly = skillsOnly,
+                Angle = skillsOnly
+                    ? $"'{display}' is listed among the skills but no bullet says what it was used for. " +
+                      "An offline review cannot pick which piece of the candidate's work supports it — find the " +
+                      "entry that used it and put the term in that bullet, with the outcome already recorded there."
+                    : $"The posting asks for '{display}' and nothing in this resume mentions it. Offline review " +
+                      "cannot tell whether the candidate has unrecorded experience with it; if they do not, leave " +
+                      "this gap open rather than claiming it.",
+            });
+        }
+
+        var evidenced = postingSkills.Count(narrativeSkills.Contains);
+        var listedOnly = postingSkills.Count(s => !narrativeSkills.Contains(s) && listedSkills.Contains(s));
+
+        // Evidenced in a bullet counts in full; listed and nothing more counts for half,
+        // because it clears the parser and not the human.
+        var before = (int)Math.Round(100.0 * (evidenced + (listedOnly * 0.5)) / postingSkills.Count);
+        var after = (int)Math.Round(100.0 * (evidenced + listedOnly) / postingSkills.Count);
+
+        return new AtsReview
+        {
+            ScoreBefore = before,
+            ScoreAfter = after,
+            Verdict =
+                $"Offline keyword match: {evidenced} of {postingSkills.Count} terms this posting uses appear in a bullet, " +
+                $"{listedOnly} appear only in the skills list, and {postingSkills.Count - evidenced - listedOnly} are absent. " +
+                "This is a term-overlap ratio, not a screener's judgement — configure a provider API key for the real review.",
+            Gaps = gaps,
+            RecruiterNotes = listedOnly > 0
+                ?
+                [
+                    $"{listedOnly} of this posting's terms appear only in the skills list. A parser accepts that; a " +
+                    "recruiter reads it as a claim with no evidence behind it.",
+                ]
+                : [],
+        };
+    }
+
+    /// <summary>
+    /// Splits the ATS brief into its posting half and its resume half at the headers
+    /// <c>TailoringGraphFactory</c> writes. A brief missing either header degrades to
+    /// treating the whole text as the posting, which yields gaps rather than an exception.
+    /// </summary>
+    private static (string Posting, string Resume) SplitAtsBrief(string user)
+    {
+        var postingAt = user.IndexOf(AtsPostingHeader, StringComparison.Ordinal);
+        var resumeAt = user.IndexOf(AtsResumeHeaderPrefix, StringComparison.Ordinal);
+
+        if (postingAt < 0 || resumeAt <= postingAt)
+        {
+            return (user, string.Empty);
+        }
+
+        return (user[(postingAt + AtsPostingHeader.Length)..resumeAt], user[resumeAt..]);
+    }
+
+    /// <summary>
+    /// Splits a markdown-rendered resume into its skills section and everything else. The
+    /// skills section runs from its own heading to the next one at the same level.
+    /// </summary>
+    private static (string Skills, string Narrative) SplitResumeSkillsSection(string resume)
+    {
+        var start = resume.IndexOf(AtsSkillsHeading, StringComparison.OrdinalIgnoreCase);
+        if (start < 0)
+        {
+            return (string.Empty, resume);
+        }
+
+        var afterHeading = start + AtsSkillsHeading.Length;
+        var end = resume.IndexOf("\n## ", afterHeading, StringComparison.Ordinal);
+        end = end < 0 ? resume.Length : end;
+
+        return (resume[afterHeading..end], resume[..start] + resume[end..]);
+    }
+
+    /// <summary>
+    /// Every canonical taxonomy skill named anywhere in <paramref name="text"/>, matched on
+    /// whole words and on the two-word phrases they form, so multi-word aliases ("Entity
+    /// Framework", "Machine Learning") resolve the same way single tokens do.
+    /// </summary>
+    private HashSet<string> CanonicalSkillsIn(string text)
+    {
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return found;
+        }
+
+        var words = AtsWordPattern().Matches(text).Select(m => m.Value).ToArray();
+
+        for (var i = 0; i < words.Length; i++)
+        {
+            foreach (var candidate in Candidates(words, i))
+            {
+                if (skillTaxonomy.TryCanonicalize(SkillNormalizer.Normalize(candidate), out var canonical))
+                {
+                    found.Add(canonical);
+                }
+            }
+        }
+
+        return found;
+
+        static IEnumerable<string> Candidates(string[] words, int i)
+        {
+            yield return words[i];
+
+            if (i + 1 < words.Length)
+            {
+                yield return words[i] + " " + words[i + 1];
+            }
+        }
+    }
+
+    /// <summary>
+    /// A word for skill-matching purposes: letters and digits plus the punctuation that is
+    /// part of a technology's name rather than between names — the <c>#</c> of "C#", the
+    /// <c>.</c> of ".NET" and "Node.js", the <c>+</c> of "C++".
+    /// </summary>
+    [GeneratedRegex(@"[A-Za-z0-9][A-Za-z0-9#+.\-]*", RegexOptions.CultureInvariant)]
+    private static partial Regex AtsWordPattern();
+
     private async Task<List<TailorCommand>> BuildCommandsAsync(string brief, CancellationToken ct)
     {
         var parsed = ParseTailorBrief(brief);
 
         var commands = new List<TailorCommand>();
-        var keptExperienceBullets = AppendEntryCommands(commands, parsed.Experience, tailorOptions.MaxExperienceEntries);
-        var keptProjectBullets = AppendEntryCommands(commands, parsed.Projects, tailorOptions.MaxProjectEntries);
+        // Experience entries are never excluded (CommandValidator's experience-protected
+        // rule): the cap orders them but proposes no exclusions, so employment history stays
+        // whole no matter how many roles the knowledge base carries.
+        var keptExperienceBullets = AppendEntryCommands(commands, parsed.Experience, tailorOptions.MaxExperienceEntries, allowExclude: false);
+        var keptProjectBullets = AppendEntryCommands(commands, parsed.Projects, tailorOptions.MaxProjectEntries, allowExclude: true);
         AppendEmphasizeSkills(commands, parsed.SkillIds);
 
         if (parsed.Effort >= ModelEffort.Thorough && parsed.Keywords.Count > 0)
@@ -220,7 +411,7 @@ public sealed class HeuristicLanguageModel(TailorOptions tailorOptions, IKnowled
     /// order, so a caller can weave keyword injections into them without re-deriving which
     /// entries survived the cap.
     /// </summary>
-    private static List<(string Id, string Text)> AppendEntryCommands(List<TailorCommand> commands, List<ParsedCandidate> candidates, int maxEntries)
+    private static List<(string Id, string Text)> AppendEntryCommands(List<TailorCommand> commands, List<ParsedCandidate> candidates, int maxEntries, bool allowExclude)
     {
         var keptBullets = new List<(string, string)>();
         if (candidates.Count == 0)
@@ -268,7 +459,7 @@ public sealed class HeuristicLanguageModel(TailorOptions tailorOptions, IKnowled
             }
         }
 
-        if (excluded.Count > 0)
+        if (allowExclude && excluded.Count > 0)
         {
             commands.Add(new ExcludeCommand { Targets = excluded, Rationale = "Lower-scoring entries, trimmed to fit the target length." });
         }

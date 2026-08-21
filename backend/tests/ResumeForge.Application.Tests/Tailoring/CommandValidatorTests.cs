@@ -37,6 +37,110 @@ public sealed class CommandValidatorTests
     }
 
     [Fact]
+    public void Exclude_targeting_a_whole_experience_entry_is_rejected_as_protected()
+    {
+        var command = new ExcludeCommand { Targets = ["exp:acme"] };
+
+        var result = _validator.Validate([command], NewDocument(), Options());
+
+        result.Accepted.ShouldBeEmpty();
+        result.Rejected.Single().Code.ShouldBe("experience-protected");
+        result.Rejected.Single().Reason.ShouldContain("exp:acme");
+    }
+
+    [Fact]
+    public void Exclude_targeting_an_experience_bullet_is_still_accepted()
+    {
+        // The protection is entry-level only: trimming one irrelevant bullet is legitimate
+        // tailoring, deleting a whole job is not.
+        var command = new ExcludeCommand { Targets = ["exp:acme#1"] };
+
+        var result = _validator.Validate([command], NewDocument(), Options());
+
+        result.Accepted.ShouldBe([command]);
+    }
+
+    [Fact]
+    public void Exclude_targeting_a_project_entry_is_still_accepted()
+    {
+        var command = new ExcludeCommand { Targets = ["prj:tinyorm"] };
+
+        var result = _validator.Validate([command], NewDocumentWithProject(), Options());
+
+        result.Accepted.ShouldBe([command]);
+    }
+
+    [Fact]
+    public void Summary_stating_a_figure_the_document_does_not_evidence_is_rejected()
+    {
+        var command = new SetSummaryCommand
+        {
+            Text = "Backend engineer with 2+ years of experience cutting latency on high-traffic services.",
+        };
+
+        var result = _validator.Validate([command], NewDocument(), Options());
+
+        result.Accepted.ShouldBeEmpty();
+        result.Rejected.Single().Code.ShouldBe("fabricated-metric");
+        result.Rejected.Single().Reason.ShouldContain("2+");
+    }
+
+    [Fact]
+    public void Summary_restating_a_figure_from_a_bullet_is_accepted()
+    {
+        var command = new SetSummaryCommand
+        {
+            Text = "Backend engineer who cut p99 latency from 840ms to 120ms and led a migration of 40 services.",
+        };
+
+        var result = _validator.Validate([command], NewDocument(), Options());
+
+        result.Accepted.ShouldBe([command]);
+    }
+
+    [Fact]
+    public void Summary_with_no_figures_at_all_is_accepted()
+    {
+        var command = new SetSummaryCommand { Text = "Backend engineer focused on latency and reliability." };
+
+        var result = _validator.Validate([command], NewDocument(), Options());
+
+        result.Accepted.ShouldBe([command]);
+    }
+
+    [Fact]
+    public void Rewrite_that_strands_a_few_words_on_a_second_line_is_rejected()
+    {
+        // 131 characters: one full line plus a short fragment on a line of its own.
+        var command = new RewriteCommand
+        {
+            Target = "exp:acme#0",
+            Text = "Cut p99 checkout latency from 840ms to 120ms across six downstream services by replacing the serial fan-out with a bounded fan-out.",
+        };
+
+        var result = _validator.Validate([command], NewDocument(), Options());
+
+        result.Accepted.ShouldBeEmpty();
+        result.Rejected.Single().Code.ShouldBe("ragged-line-fill");
+        result.Rejected.Single().Reason.ShouldContain("169-210 characters");
+    }
+
+    [Fact]
+    public void Rewrite_filling_the_lines_it_occupies_is_accepted()
+    {
+        // 188 characters: two lines, the second of them past halfway.
+        var command = new RewriteCommand
+        {
+            Target = "exp:acme#0",
+            Text = "Cut p99 checkout latency from 840ms to 120ms by replacing a serial fan-out with a bounded parallel scatter-gather, holding the improvement through two peak seasons without adding capacity.",
+        };
+
+        var result = _validator.Validate([command], NewDocument(), Options());
+
+        result.Accepted.ShouldBe([command]);
+    }
+
+    [Fact]
     public void SetTagline_at_full_effort_rewrites_a_project_description()
     {
         var command = new SetTaglineCommand

@@ -19,6 +19,22 @@ public sealed record TailoringResult
     /// <summary>How well the tailored resume covers the job's requirements.</summary>
     public required CoverageReport Coverage { get; init; }
 
+    /// <summary>
+    /// The <c>ats-review</c> pass's verdict on the <em>base</em> resume: what a screener
+    /// found missing, and the score before and after closing those gaps. Null when the pass
+    /// did not run (<see cref="ModelEffort.Minimal"/>) or could not complete — its absence
+    /// never fails a run.
+    /// </summary>
+    /// <remarks>
+    /// Reported alongside <see cref="Coverage"/> rather than instead of it, because the two
+    /// answer different questions. Coverage is deterministic and mechanical: it asks whether
+    /// some included node carries a matching skill tag, and it is computed against the
+    /// finished document. This is a model's judgement, computed against the document the run
+    /// started from, and it is the only place the product says what the resume was missing
+    /// and what closing those gaps would be worth.
+    /// </remarks>
+    public AtsReview? AtsReview { get; init; }
+
     /// <summary>Total token spend for the run.</summary>
     public required TokenUsage Usage { get; init; }
 

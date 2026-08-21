@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { Textarea } from '@/components/ui/Textarea';
 import { GraphTracePanel } from '@/components/graph/GraphTracePanel';
+import { AtsReviewPanel } from '@/components/tailor/AtsReviewPanel';
 import { CoveragePanel } from '@/components/tailor/CoveragePanel';
 import { DiffView } from '@/components/tailor/DiffView';
 import { CommandsPanel } from '@/components/tailor/CommandsPanel';
@@ -62,6 +63,7 @@ export default function Tailor() {
   const [textValue, setTextValue] = useState('');
   const [effort, setEffort] = useState<ModelEffort>(DEFAULT_EFFORT);
   const [maxPages, setMaxPages] = useState<PageBudget>(2);
+  const [headline, setHeadline] = useState('');
   // Persisted, unlike the fields above: "always include this project, never that
   // one" is a standing judgement about the knowledge base itself, not about the
   // posting being tailored to, so re-entering it for every run is pure retyping.
@@ -104,6 +106,7 @@ export default function Tailor() {
       effort,
       maxPages,
       dryRun: false,
+      ...(headline.trim().length > 0 ? { headline: headline.trim() } : {}),
       ...(pinnedEntryIds.length > 0 ? { pinnedEntryIds } : {}),
       ...(excludedEntryIds.length > 0 ? { excludedEntryIds } : {}),
     });
@@ -231,6 +234,19 @@ export default function Tailor() {
                   </h3>
                   <PageBudgetControl value={maxPages} onChange={setMaxPages} />
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                    Resume title
+                  </h3>
+                  <input
+                    type="text"
+                    value={headline}
+                    onChange={(event) => setHeadline(event.target.value)}
+                    placeholder={job.title ? `Default: ${job.title}` : 'e.g. Embedded Systems Engineer'}
+                    className="w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                  />
+                  <p className="text-xs text-[var(--text-muted)]">
+                    Shown under your name. Leave blank to use the job posting's title.
+                  </p>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                     Projects
                   </h3>
                   <ProjectSelectionPanel
@@ -279,6 +295,7 @@ export default function Tailor() {
             <TabsList>
               <TabsTrigger value="graph">Graph trace</TabsTrigger>
               <TabsTrigger value="coverage">Coverage</TabsTrigger>
+              {tailor.data.atsReview ? <TabsTrigger value="ats">ATS review</TabsTrigger> : null}
               <TabsTrigger value="diff">Diff</TabsTrigger>
               <TabsTrigger value="commands">Commands</TabsTrigger>
               <TabsTrigger value="tokens">Token usage</TabsTrigger>
@@ -289,6 +306,11 @@ export default function Tailor() {
             <TabsContent value="coverage">
               <CoveragePanel coverage={tailor.data.coverage} />
             </TabsContent>
+            {tailor.data.atsReview ? (
+              <TabsContent value="ats">
+                <AtsReviewPanel review={tailor.data.atsReview} />
+              </TabsContent>
+            ) : null}
             <TabsContent value="diff">
               <DiffView diff={tailor.data.diff} />
             </TabsContent>

@@ -125,15 +125,30 @@ public sealed class HeuristicLanguageModelTests
     }
 
     [Fact]
-    public async Task Excludes_entries_beyond_the_configured_experience_cap()
+    public async Task Never_proposes_excluding_an_experience_entry_even_beyond_the_cap()
     {
+        // Experience entries are protected (CommandValidator's experience-protected rule):
+        // the cap bounds which entries get include/order/variant attention, but an entry
+        // beyond it simply stays as authored — no exclude command is ever proposed for it.
         var model = new HeuristicLanguageModel(new TailorOptions { MaxExperienceEntries = 1 }, _knowledgeBaseReader, _taxonomy);
         const string brief = "CANDIDATES-EXPERIENCE\nexp:a#0|v0|text a\nexp:b#0|v0|text b\n";
 
         var response = await model.CompleteAsync<IReadOnlyList<TailorCommand>>(NewRequest(brief), CancellationToken.None);
 
         response.Value.OfType<IncludeCommand>().Single().Targets.ShouldBe(["exp:a"]);
-        response.Value.OfType<ExcludeCommand>().Single().Targets.ShouldBe(["exp:b"]);
+        response.Value.OfType<ExcludeCommand>().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Excludes_projects_beyond_the_configured_project_cap()
+    {
+        var model = new HeuristicLanguageModel(new TailorOptions { MaxProjectEntries = 1 }, _knowledgeBaseReader, _taxonomy);
+        const string brief = "CANDIDATES-PROJECTS\nprj:a#0|v0|text a\nprj:b#0|v0|text b\n";
+
+        var response = await model.CompleteAsync<IReadOnlyList<TailorCommand>>(NewRequest(brief), CancellationToken.None);
+
+        response.Value.OfType<IncludeCommand>().Single().Targets.ShouldBe(["prj:a"]);
+        response.Value.OfType<ExcludeCommand>().Single().Targets.ShouldBe(["prj:b"]);
     }
 
     [Fact]

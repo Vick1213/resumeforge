@@ -48,7 +48,7 @@ public sealed class TailoringGraphFactoryTests
         graph.Nodes.Single(n => n.Name == name).DependsOn;
 
     [Fact]
-    public void Graph_declares_exactly_the_fifteen_documented_nodes()
+    public void Graph_declares_exactly_the_seventeen_documented_nodes()
     {
         var graph = BuildGraph();
 
@@ -56,8 +56,8 @@ public sealed class TailoringGraphFactoryTests
         [
             "fetch-jd", "load-kb", "analyze-jd", "build-base",
             "score-experience", "score-projects", "score-skills",
-            "build-brief", "propose-commands", "validate-commands",
-            "verify-fabrication", "verify-coverage", "execute-commands",
+            "ats-review", "build-brief", "propose-commands", "validate-commands",
+            "repair-commands", "verify-fabrication", "verify-coverage", "execute-commands",
             "enforce-page-budget", "render",
         ],
             ignoreOrder: true);
@@ -77,16 +77,35 @@ public sealed class TailoringGraphFactoryTests
     }
 
     [Fact]
-    public void Build_brief_depends_on_all_three_score_nodes_and_on_the_posting_itself()
+    public void Build_brief_depends_on_all_three_score_nodes_the_posting_itself_and_the_ats_review()
     {
         var graph = BuildGraph();
 
         // fetch-jd is declared even though every score node already reaches it transitively:
         // the brief reads the posting out of the context directly (for the JOB header and the
         // POSTING excerpt), and a node that reads a result must declare the edge that produced
-        // it rather than rely on someone else's happening to schedule it first.
+        // it rather than rely on someone else's happening to schedule it first. ats-review is
+        // an edge for the same reason — the brief carries its findings — and it is the one
+        // dependency whose result may legitimately be absent (CONTRACTS.md §6 "ATS review
+        // pass"), which build-brief reads with TryGet rather than Get.
         DependsOn(graph, "build-brief").ShouldBe(
-            ["fetch-jd", "score-experience", "score-projects", "score-skills"], ignoreOrder: true);
+            ["fetch-jd", "score-experience", "score-projects", "score-skills", "ats-review"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public void Ats_review_depends_only_on_the_posting_and_the_base_resume()
+    {
+        var graph = BuildGraph();
+
+        DependsOn(graph, "ats-review").ShouldBe(["fetch-jd", "build-base"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public void Ats_review_is_not_critical_so_a_failed_review_cannot_fail_the_run()
+    {
+        var graph = BuildGraph();
+
+        graph.Nodes.Single(n => n.Name == "ats-review").Critical.ShouldBeFalse();
     }
 
     [Fact]
@@ -99,13 +118,16 @@ public sealed class TailoringGraphFactoryTests
     }
 
     [Fact]
-    public void Verify_fabrication_verify_coverage_and_execute_commands_are_independent_siblings_of_validate_commands()
+    public void Verify_fabrication_verify_coverage_and_execute_commands_are_independent_siblings_of_repair_commands()
     {
         var graph = BuildGraph();
 
-        DependsOn(graph, "verify-fabrication").ShouldBe(["validate-commands"]);
-        DependsOn(graph, "verify-coverage").ShouldBe(["validate-commands"]);
-        DependsOn(graph, "execute-commands").ShouldBe(["validate-commands"]);
+        // The repair round sits between validation and every consumer of the command set,
+        // so the three downstream nodes all read the repaired result.
+        DependsOn(graph, "repair-commands").ShouldBe(["build-base", "validate-commands"], ignoreOrder: true);
+        DependsOn(graph, "verify-fabrication").ShouldBe(["repair-commands"]);
+        DependsOn(graph, "verify-coverage").ShouldBe(["repair-commands"]);
+        DependsOn(graph, "execute-commands").ShouldBe(["repair-commands"]);
     }
 
     [Fact]

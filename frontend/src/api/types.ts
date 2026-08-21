@@ -447,6 +447,29 @@ export interface CoverageReport {
   requirements: RequirementCoverage[];
 }
 
+/**
+ * The `ats-review` pass's verdict on the base resume (CONTRACTS.md §6 "ATS review pass"):
+ * what a screener found missing, and the score before and after closing those gaps.
+ */
+export interface AtsReview {
+  scoreBefore: number;
+  scoreAfter: number;
+  verdict: string;
+  gaps: AtsGap[];
+  recruiterNotes: string[];
+}
+
+export type AtsGapImportance = 'critical' | 'important' | 'niceToHave';
+
+export interface AtsGap {
+  keyword: string;
+  importance: AtsGapImportance;
+  /** True when the term is in the skills list but no bullet puts it in context. */
+  skillsOnly: boolean;
+  placement?: string | null;
+  angle: string;
+}
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -474,6 +497,8 @@ export interface TailoringResult {
   diff: ResumeDiffEntry[];
   commands: CommandValidationResult;
   coverage: CoverageReport;
+  /** Absent when the review pass did not run (Minimal effort) or could not complete. */
+  atsReview?: AtsReview | null;
   usage: TokenUsage;
   trace: GraphNodeTrace[];
 }
@@ -512,6 +537,13 @@ export interface TailorRequest {
    * backend to regenerate this file.
    */
   excludedEntryIds?: string[];
+  /**
+   * Custom headline for the tailored resume. Non-blank replaces the
+   * job-title-derived headline; omit or blank keeps the default (the posting's
+   * title). Hand-edited pending `npm run generate:api`, which currently
+   * requires a running backend to regenerate this file.
+   */
+  headline?: string;
   dryRun: boolean;
 }
 
